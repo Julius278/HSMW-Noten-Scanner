@@ -259,13 +259,37 @@ async function followIntermediateForms(jar, page, maxSteps = 5) {
     return current;
 }
 
+// Manche Shibboleth-IdP-Installationen zeigen vor dem eigentlichen
+// Login-Formular technische Zwischenseiten ohne Passwortfeld, z.B. den
+// "Client Storage Service" (prüft per JavaScript, ob im localStorage bereits
+// eine Sitzung hinterlegt ist). Diese Seiten enthalten laut Shibboleth-
+// Quellcode immer einen <noscript>-Fallback mit normalem Submit-Button für
+// Clients ohne JavaScript - das Formular kann daher einfach mit seinen
+// Standard-/Leerwerten abgeschickt werden, ohne dass echtes JavaScript nötig
+// wäre oder die genauen Feldnamen bekannt sein müssen.
+async function bypassIntermediateForms(jar, page, maxSteps = 5) {
+    let current = page;
+    for (let i = 0; i < maxSteps; i++) {
+        const $ = cheerio.load(current.body);
+        if ($('input[type=password]').length > 0) return current;
+
+        const form = $('form').first();
+        if (form.length === 0) return current;
+
+        log(`Sende technische Zwischenseite automatisch ab (Titel: "${$('title').text().trim()}")...`);
+        current = await submitForm($, form, current.url, jar, {});
+    }
+    return current;
+}
+
 // ---------------------------------------------------------------------------
 // Login
 // ---------------------------------------------------------------------------
 
 async function login(jar) {
     log('Öffne ' + CONFIG.url);
-    const startPage = await fetchWithCookies(CONFIG.url, { method: 'GET' }, jar);
+    let startPage = await fetchWithCookies(CONFIG.url, { method: 'GET' }, jar);
+    startPage = await bypassIntermediateForms(jar, startPage);
     let $ = cheerio.load(startPage.body);
 
     if ($('input[type=password]').length === 0) {
