@@ -28,6 +28,10 @@
 const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
+// Die ioBroker-Sandbox exponiert nicht alle Node.js-Globals - URL und
+// URLSearchParams sind zwar in normalem Node.js global verfügbar, hier aber
+// explizit aus dem "url"-Modul zu importieren.
+const { URL, URLSearchParams } = require('url');
 
 // ---------------------------------------------------------------------------
 // Konfiguration
