@@ -213,7 +213,7 @@ function dumpDebug(name, html) {
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const file = path.join(CONFIG.debugDir, `${stamp}-${name}.html`);
         fs.writeFileSync(file, html, 'utf-8');
-        log(`Debug-Snapshot gespeichert: ${file}`);
+        log(`Debug-Snapshot gespeichert: ${file}`, 'debug');
     } catch (err) {
         log('Konnte Debug-Snapshot nicht schreiben: ' + err.message, 'warn');
     }
@@ -313,7 +313,7 @@ async function followIntermediateForms(jar, page, maxSteps = 5) {
 
         if (relayForm.length === 0) return current;
 
-        log('Folge automatischem SSO-Weiterleitungsformular...');
+        log('Folge automatischem SSO-Weiterleitungsformular...', 'debug');
         current = await submitForm($, relayForm, current.url, jar, {});
     }
     return current;
@@ -345,7 +345,7 @@ async function bypassIntermediateForms(jar, page, maxSteps = 8) {
 
         const currentPath = new URL(current.url).pathname;
         if (SPNEGO_PATH_RE.test(currentPath)) {
-            log(`SPNEGO/Kerberos-Anmeldeversuch erkannt (Status ${current.status}), erzwinge Fallback auf Formular-Login...`);
+            log(`SPNEGO/Kerberos-Anmeldeversuch erkannt (Status ${current.status}), erzwinge Fallback auf Formular-Login...`, 'debug');
             const errorUrl = new URL(current.url);
             errorUrl.pathname += '/error';
             current = await fetchWithCookies(errorUrl.toString(), { method: 'GET' }, jar);
@@ -360,7 +360,7 @@ async function bypassIntermediateForms(jar, page, maxSteps = 8) {
             .first();
         if (form.length === 0) return current;
 
-        log(`Sende technische Zwischenseite automatisch ab (Titel: "${$('title').text().trim()}")...`);
+        log(`Sende technische Zwischenseite automatisch ab (Titel: "${$('title').text().trim()}")...`, 'debug');
         current = await submitForm($, form, current.url, jar, {});
     }
     return current;
@@ -371,7 +371,7 @@ async function bypassIntermediateForms(jar, page, maxSteps = 8) {
 // ---------------------------------------------------------------------------
 
 async function login(jar) {
-    log('Öffne ' + CONFIG.url);
+    log('Öffne ' + CONFIG.url, 'debug');
     let startPage = await fetchWithCookies(CONFIG.url, { method: 'GET' }, jar);
     startPage = await bypassIntermediateForms(jar, startPage);
     let $ = cheerio.load(startPage.body);
@@ -421,7 +421,7 @@ async function login(jar) {
         throw new Error('Login fehlgeschlagen (Passwortfeld weiterhin sichtbar). Zugangsdaten prüfen.');
     }
 
-    log('Login erfolgreich.');
+    log('Login erfolgreich.', 'debug');
     return loginRes;
 }
 
@@ -455,7 +455,7 @@ async function openGradesView(jar, page) {
         fullViewUrl = new URL('/?view=full', page.url).toString();
     }
 
-    log('Öffne vollständige Notenübersicht (alle Fächer)...');
+    log('Öffne vollständige Notenübersicht (alle Fächer)...', 'debug');
     let current = await fetchWithCookies(fullViewUrl, { method: 'GET' }, jar);
 
     let $$ = cheerio.load(current.body);
@@ -463,7 +463,7 @@ async function openGradesView(jar, page) {
         .filter((i, el) => $$(el).find('input[name=confirm_marks]').length > 0)
         .first();
     if (confirmForm.length > 0) {
-        log('Bestätige Rechtsbehelfsbelehrung...');
+        log('Bestätige Rechtsbehelfsbelehrung...', 'debug');
         current = await submitForm($$, confirmForm, current.url, jar, {});
     }
 
@@ -606,16 +606,16 @@ async function checkGrades() {
             const isGraded = !!grade && !UNGRADED_VALUES.includes(grade.toLowerCase());
 
             if (isGraded) {
-                log(`Note für "${moduleName}" ist eingetragen: ${grade}`);
+                log(`Note für "${moduleName}" ist eingetragen: ${grade}`, 'debug');
             } else {
-                log(`Note für "${moduleName}" ist noch nicht eingetragen.`);
+                log(`Note für "${moduleName}" ist noch nicht eingetragen.`, 'debug');
             }
 
             const prevState = await getStateAsync(prefix + 'graded');
             const wasGradedBefore = prevState ? prevState.val === true : false;
 
             if (isGraded && !wasGradedBefore) {
-                log(`Neuer Notenstand für "${moduleName}" erkannt -> sende Pushover-Benachrichtigung.`);
+                log(`Neuer Notenstand für "${moduleName}" erkannt -> sende Pushover-Benachrichtigung.`, 'info');
                 notify(`Note für ${moduleName} wurde eingetragen: ${grade}`);
             }
 
@@ -661,7 +661,8 @@ async function checkGrades() {
     schedule(CONFIG.cronSchedule, () => checkGrades());
     log(
         `HSMW Noten-Scanner gestartet, Zeitplan: ${CONFIG.cronSchedule}, ` +
-            `überwachte Module: ${TARGET_MODULES.join(', ')}`,
+            `überwachte Module: ${TARGET_MODULES.join(', ')}`, 
+        'info'
     );
     if (CONFIG.runOnScriptStart) {
         checkGrades();
