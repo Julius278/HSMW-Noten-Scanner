@@ -29,6 +29,13 @@ Mittweida (separater IdP-Host, SAML2-POST-Binding). Das Script:
 - übermittelt Cookies **pro Hostname getrennt**, da IdP und QIS/POS-Portal
   unterschiedliche Hosts sind und ggf. gleich benannte Session-Cookies
   verwenden,
+- sendet vor dem eigentlichen Login-Formular automatisch die technische
+  "Client Storage Service"-Zwischenseite ab (JS-loses `<noscript>`-Formular)
+  und überspringt danach einen erfolglosen **SPNEGO/Kerberos**-Anmeldeversuch
+  (`/idp/profile/Authn/SPNEGO/...`, endet ohne Domänen-Ticket immer mit
+  Status 401) über dessen `/error`-Endpunkt, genau wie es ein Browser ohne
+  Kerberos-Ticket ebenfalls tut — erst danach erscheint das echte
+  Passwort-Formular,
 - folgt nach erfolgreichem Login automatisch der SAML-Zwischenseite
   (verstecktes Formular mit `SAMLResponse`/`RelayState`), die sich im echten
   Browser per JavaScript selbst zurück zum QIS/POS-Portal postet.

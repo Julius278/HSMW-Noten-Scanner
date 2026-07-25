@@ -267,11 +267,30 @@ async function followIntermediateForms(jar, page, maxSteps = 5) {
 // Clients ohne JavaScript - das Formular kann daher einfach mit seinen
 // Standard-/Leerwerten abgeschickt werden, ohne dass echtes JavaScript nötig
 // wäre oder die genauen Feldnamen bekannt sein müssen.
-async function bypassIntermediateForms(jar, page, maxSteps = 5) {
+// Manche IdP-Konfigurationen versuchen vor dem Passwort-Formular zusätzlich
+// eine SPNEGO/Kerberos-Anmeldung (Single-Sign-On per Windows-Domänenticket,
+// Pfad "/idp/profile/Authn/SPNEGO/<conversation>"). Ohne Kerberos-Ticket
+// (bzw. ohne Browser) schlägt das immer mit Status 401 fehl; laut echtem
+// HAR-Mitschnitt bricht der Browser diesen Versuch dann selbst ab, indem er
+// den zugehörigen "/error"-Endpunkt aufruft (gleiche Conversation-ID als
+// Query-Parameter) - das führt zurück in den normalen Login-Flow, der
+// schließlich auf der Seite mit dem Passwort-Formular landet.
+const SPNEGO_PATH_RE = /\/idp\/profile\/Authn\/SPNEGO\/[^/?]+$/;
+
+async function bypassIntermediateForms(jar, page, maxSteps = 8) {
     let current = page;
     for (let i = 0; i < maxSteps; i++) {
         const $ = cheerio.load(current.body);
         if ($('input[type=password]').length > 0) return current;
+
+        const currentPath = new URL(current.url).pathname;
+        if (SPNEGO_PATH_RE.test(currentPath)) {
+            log(`SPNEGO/Kerberos-Anmeldeversuch erkannt (Status ${current.status}), erzwinge Fallback auf Formular-Login...`);
+            const errorUrl = new URL(current.url);
+            errorUrl.pathname += '/error';
+            current = await fetchWithCookies(errorUrl.toString(), { method: 'GET' }, jar);
+            continue;
+        }
 
         // Nur POST-Formulare berücksichtigen: technische SSO-Zwischenschritte
         // (Client Storage, SAML-Relay) sind immer POST, während z.B. das
