@@ -51,11 +51,11 @@ Mittweida (separater IdP-Host, SAML2-POST-Binding). Beide Varianten:
 
 Die Notentabelle hat die Spalten `PNr, Vert, S, Modul, Credits/Wichtung, Art,
 Fach, Note, Versuch, Status/Vermerk, PDatum, Meldung`. Gesucht wird in der
-Spalte **Fach** (voller Modulname, z.B. "Blockchain 1"); eine leere **Note**-
-Zelle bedeutet "noch nicht eingetragen" (z.B. bei Status `AN` = angemeldet,
-aber noch offen). `TARGET_MODULE` sollte also der volle oder eindeutige
-Teilstring des Fach-Namens sein, nicht die kurze Modul-Kennung (Spalte
-"Modul", z.B. "8102(M)").
+Spalte **Fach** (voller Modulname, z.B. "Beispielmodul 1"); eine leere
+**Note**-Zelle bedeutet "noch nicht eingetragen" (z.B. bei Status `AN` =
+angemeldet, aber noch offen). `targetModule` sollte also der volle oder
+eindeutige Teilstring des Fach-Namens sein, nicht die kurze Modul-Kennung
+(Spalte "Modul", z.B. "1234(M)").
 
 Schlägt ein Schritt fehl, wird das im ioBroker-Log gemeldet; über
 `CONFIG.debugDir` kann zusätzlich ein HTML-Snapshot der zuletzt geladenen
@@ -75,7 +75,7 @@ Seite auf die Platte geschrieben werden, um die Selektoren in
    hineinkopieren.
 4. Im `CONFIG`-Block am Anfang des Scripts anpassen:
    - `username` / `password` — deine QIS-Zugangsdaten
-   - `targetModule` — Name/Teilstring des zu überwachenden Moduls, z.B. `Analysis 1`
+   - `targetModule` — Name/Teilstring des zu überwachenden Moduls, z.B. `Beispielmodul 1`
    - `pushoverInstance` / `pushoverSound` — z.B. `pushover.0`
    - `cronSchedule` — wie oft geprüft werden soll, Standard alle 15 Minuten
 5. Script aktivieren/starten.

@@ -66,8 +66,9 @@ CONFIRM_PAGE = """<html><body>
 </form>
 </body></html>"""
 
-# Spaltenstruktur wie im echten HTML-Export: Blockchain 1 ist benotet,
-# Blockchain 4 ist angemeldet ("AN") mit leerer Note-Zelle.
+# Spaltenstruktur wie im echten HTML-Export, mit generischen Beispieldaten:
+# Beispielmodul 1 ist benotet, Beispielmodul 2 ist angemeldet ("AN") mit
+# leerer Note-Zelle.
 GRADES_TABLE_PAGE = """<html><body>
 <table>
   <thead>
@@ -79,13 +80,13 @@ GRADES_TABLE_PAGE = """<html><body>
   </thead>
   <tbody>
     <tr>
-      <td>8101</td><td>1</td><td>5</td><td>8101(M)</td><td>5.0</td>
-      <td>PL</td><td>Blockchain 1</td><td>1,7</td><td>1</td>
-      <td>BE</td><td>12.02.2026</td><td></td>
+      <td>1234</td><td>1</td><td>1</td><td>1234(M)</td><td>5.0</td>
+      <td>PL</td><td>Beispielmodul 1</td><td>2,0</td><td>1</td>
+      <td>BE</td><td>01.01.2026</td><td></td>
     </tr>
     <tr>
-      <td>8104</td><td>1</td><td>6</td><td>8104(M)</td><td>5.0</td>
-      <td>PL</td><td>Blockchain 4</td><td></td><td>1</td>
+      <td>5678</td><td>1</td><td>2</td><td>5678(M)</td><td>5.0</td>
+      <td>PL</td><td>Beispielmodul 2</td><td></td><td>1</td>
       <td>AN</td><td></td><td></td>
     </tr>
   </tbody>
@@ -189,28 +190,28 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(len(tables[0].rows), 2)
 
     def test_graded_module(self):
-        result = find_target_grade(parse_grades_table(GRADES_TABLE_PAGE), "Blockchain 1")
+        result = find_target_grade(parse_grades_table(GRADES_TABLE_PAGE), "Beispielmodul 1")
         self.assertIsNotNone(result)
-        self.assertEqual(result.grade, "1,7")
+        self.assertEqual(result.grade, "2,0")
         self.assertTrue(result.is_graded)
 
     def test_ungraded_module_has_empty_note_cell(self):
-        result = find_target_grade(parse_grades_table(GRADES_TABLE_PAGE), "Blockchain 4")
+        result = find_target_grade(parse_grades_table(GRADES_TABLE_PAGE), "Beispielmodul 2")
         self.assertIsNotNone(result)
         self.assertIsNone(result.grade)
         self.assertFalse(result.is_graded)
 
     def test_module_search_is_case_insensitive(self):
-        result = find_target_grade(parse_grades_table(GRADES_TABLE_PAGE), "blockchain 1")
+        result = find_target_grade(parse_grades_table(GRADES_TABLE_PAGE), "beispielmodul 1")
         self.assertIsNotNone(result)
-        self.assertEqual(result.grade, "1,7")
+        self.assertEqual(result.grade, "2,0")
 
     def test_unknown_module(self):
-        self.assertIsNone(find_target_grade(parse_grades_table(GRADES_TABLE_PAGE), "Analysis 1"))
+        self.assertIsNone(find_target_grade(parse_grades_table(GRADES_TABLE_PAGE), "Unbekanntes Modul"))
 
     def test_placeholder_counts_as_ungraded(self):
-        html = GRADES_TABLE_PAGE.replace("<td>1,7</td>", "<td>-</td>")
-        result = find_target_grade(parse_grades_table(html), "Blockchain 1")
+        html = GRADES_TABLE_PAGE.replace("<td>2,0</td>", "<td>-</td>")
+        result = find_target_grade(parse_grades_table(html), "Beispielmodul 1")
         self.assertEqual(result.grade, "-")
         self.assertFalse(result.is_graded)
 
@@ -253,7 +254,7 @@ class EndToEndTests(unittest.TestCase):
         )
 
     def test_full_flow_bypasses_spnego_and_reads_grade(self):
-        cfg = self._config(["Blockchain 1"])
+        cfg = self._config(["Beispielmodul 1"])
         self.assertEqual(check_grades(cfg), 0)
 
         state = self.server.portal_state
@@ -268,46 +269,46 @@ class EndToEndTests(unittest.TestCase):
         self.assertNotIn("q", state["client_storage_fields"])
 
     def test_notification_only_on_transition_to_graded(self):
-        cfg = self._config(["Blockchain 1"])
+        cfg = self._config(["Beispielmodul 1"])
 
         self.assertEqual(check_grades(cfg), 0)
         self.assertEqual(len(self.notifications), 1)
-        self.assertIn("1,7", self.notifications[0])
+        self.assertIn("2,0", self.notifications[0])
 
         # Zweiter Lauf: Note unverändert -> keine erneute Benachrichtigung.
         self.assertEqual(check_grades(cfg), 0)
         self.assertEqual(len(self.notifications), 1)
 
     def test_no_notification_while_ungraded(self):
-        cfg = self._config(["Blockchain 4"])
+        cfg = self._config(["Beispielmodul 2"])
         self.assertEqual(check_grades(cfg), 0)
         self.assertEqual(self.notifications, [])
 
         saved = scanner.load_state(self.state_file)
-        self.assertFalse(saved["modules"]["Blockchain 4"]["graded"])
+        self.assertFalse(saved["modules"]["Beispielmodul 2"]["graded"])
 
     def test_multiple_modules_in_one_run(self):
-        cfg = self._config(["Blockchain 1", "Blockchain 4"])
+        cfg = self._config(["Beispielmodul 1", "Beispielmodul 2"])
         self.assertEqual(check_grades(cfg), 0)
 
         saved = scanner.load_state(self.state_file)
-        self.assertEqual(saved["modules"]["Blockchain 1"]["grade"], "1,7")
-        self.assertEqual(saved["modules"]["Blockchain 4"]["grade"], "")
+        self.assertEqual(saved["modules"]["Beispielmodul 1"]["grade"], "2,0")
+        self.assertEqual(saved["modules"]["Beispielmodul 2"]["grade"], "")
         self.assertEqual(len(self.notifications), 1)
 
     def test_wrong_credentials_fail(self):
-        cfg = self._config(["Blockchain 1"])
+        cfg = self._config(["Beispielmodul 1"])
         cfg.password = "falsch"
         self.assertEqual(check_grades(cfg), 1)
         self.assertEqual(self.notifications, [])
 
     def test_missing_credentials_are_reported(self):
-        cfg = self._config(["Blockchain 1"])
+        cfg = self._config(["Beispielmodul 1"])
         cfg.username = ""
         self.assertEqual(check_grades(cfg), 2)
 
     def test_unknown_module_does_not_fail_run(self):
-        cfg = self._config(["Analysis 1"])
+        cfg = self._config(["Unbekanntes Modul"])
         self.assertEqual(check_grades(cfg), 0)
         self.assertEqual(self.notifications, [])
 

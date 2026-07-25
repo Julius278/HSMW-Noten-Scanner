@@ -41,20 +41,20 @@ nicht in einer Datei steht:
 | `HSMW_USERNAME` | QIS-Benutzername (ohne `@hs-mittweida.de`) |
 | `HSMW_PASSWORD` | QIS-Kennwort |
 | `HSMW_URL` | Startseite, Standard `https://qispos.hs-mittweida.de/noten?intranet&m` |
-| `HSMW_TARGET_MODULES` | kommaseparierte Modulliste, z.B. `Blockchain 4,Analysis 2` |
+| `HSMW_TARGET_MODULES` | kommaseparierte Modulliste, z.B. `Beispielmodul 1,Beispielmodul 2` |
 | `HSMW_INTERVAL_MINUTES` | Intervall für `--loop` |
 | `HSMW_STATE_FILE` | Pfad der Zustandsdatei |
 | `HSMW_DEBUG_DIR` | Verzeichnis für HTML-Snapshots bei Fehlern |
 
 Gesucht wird in der Spalte **Fach**, also der volle bzw. eindeutige Modulname
-("Blockchain 4"), nicht die kurze Kennung aus der Spalte "Modul" (`8104(M)`).
-Groß-/Kleinschreibung ist unerheblich.
+("Beispielmodul 1"), nicht die kurze Kennung aus der Spalte "Modul"
+(`1234(M)`). Groß-/Kleinschreibung ist unerheblich.
 
 ## Aufruf
 
 ```bash
 python3 hsmw_noten_scanner.py                        # einmalig prüfen
-python3 hsmw_noten_scanner.py --module "Blockchain 4"  # Modul ad hoc überschreiben
+python3 hsmw_noten_scanner.py --module "Beispielmodul 1"  # Modul ad hoc überschreiben
 python3 hsmw_noten_scanner.py --loop                 # dauerhaft, alle 15 min
 python3 hsmw_noten_scanner.py -v                     # mit Debug-Logging
 ```
@@ -62,12 +62,12 @@ python3 hsmw_noten_scanner.py -v                     # mit Debug-Logging
 Beispielausgabe:
 
 ```
-2026-07-25 12:00:01 INFO    Öffne https://qispos.hs-mittweida.de/noten?intranet&m
-2026-07-25 12:00:02 INFO    Sende technische Zwischenseite automatisch ab (Titel: "Client Storage Service")...
-2026-07-25 12:00:02 INFO    SPNEGO/Kerberos-Anmeldeversuch erkannt (Status 401), erzwinge Fallback auf Formular-Login...
-2026-07-25 12:00:03 INFO    Login erfolgreich.
-2026-07-25 12:00:03 INFO    Öffne vollständige Notenübersicht (alle Fächer)...
-2026-07-25 12:00:04 INFO    Note für "Blockchain 4" ist noch nicht eingetragen.
+2026-01-01 12:00:01 INFO    Öffne https://qispos.hs-mittweida.de/noten?intranet&m
+2026-01-01 12:00:02 INFO    Sende technische Zwischenseite automatisch ab (Titel: "Client Storage Service")...
+2026-01-01 12:00:02 INFO    SPNEGO/Kerberos-Anmeldeversuch erkannt (Status 401), erzwinge Fallback auf Formular-Login...
+2026-01-01 12:00:03 INFO    Login erfolgreich.
+2026-01-01 12:00:03 INFO    Öffne vollständige Notenübersicht (alle Fächer)...
+2026-01-01 12:00:04 INFO    Note für "Beispielmodul 1" ist noch nicht eingetragen.
 ```
 
 Exit-Codes: `0` = Lauf ok, `1` = Fehler beim Abrufen/Parsen, `2` = Konfiguration
@@ -88,7 +88,7 @@ Der Versandweg steht noch nicht fest, daher wird eine neu eingetragene Note
 vorerst **nur geloggt**:
 
 ```
-2026-07-25 12:15:04 INFO    BENACHRICHTIGUNG: Note für Blockchain 4 wurde eingetragen: 1,7
+2026-01-01 12:15:04 INFO    BENACHRICHTIGUNG: Note für Beispielmodul 1 wurde eingetragen: 2,0
 ```
 
 Zum Aktivieren eines echten Kanals genügt es, `notify()` in
@@ -116,13 +116,13 @@ Wie beim ioBroker-Script wird nur beim Übergang von "nicht eingetragen" zu
 
 ```json
 {
-  "last_check": "2026-07-25T12:15:04+00:00",
+  "last_check": "2026-01-01T12:15:04+00:00",
   "modules": {
-    "Blockchain 4": {
-      "grade": "1,7",
+    "Beispielmodul 1": {
+      "grade": "2,0",
       "graded": true,
-      "row": "8104 | 1 | 6 | 8104(M) | 5.0 | PL | Blockchain 4 | 1,7 | 1 | BE | 20.07.2026 | ",
-      "last_check": "2026-07-25T12:15:04+00:00"
+      "row": "1234 | 1 | 1 | 1234(M) | 5.0 | PL | Beispielmodul 1 | 2,0 | 1 | BE | 01.01.2026 | ",
+      "last_check": "2026-01-01T12:15:04+00:00"
     }
   }
 }

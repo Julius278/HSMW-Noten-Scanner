@@ -17,10 +17,10 @@ password = "dein_kennwort"
 url = "https://qispos.hs-mittweida.de/noten?intranet&m"
 
 # Module, deren Note überwacht werden soll. Gesucht wird in der Spalte "Fach",
-# also der volle bzw. eindeutige Modulname ("Blockchain 4"), nicht die kurze
-# Modul-Kennung aus der Spalte "Modul" (z.B. "8102(M)").
+# also der volle bzw. eindeutige Modulname ("Beispielmodul 1"), nicht die kurze
+# Modul-Kennung aus der Spalte "Modul" (z.B. "1234(M)").
 # Groß-/Kleinschreibung wird ignoriert.
-target_modules = ["Blockchain 4"]
+target_modules = ["dein_modulname"]
 
 # Intervall für den Dauerbetrieb (--loop) in Minuten
 interval_minutes = 15

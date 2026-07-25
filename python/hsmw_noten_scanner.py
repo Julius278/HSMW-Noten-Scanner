@@ -20,7 +20,7 @@ Aufruf:
 
     python3 hsmw_noten_scanner.py                 # einmalig prüfen (für cron)
     python3 hsmw_noten_scanner.py --loop          # dauerhaft im Intervall
-    python3 hsmw_noten_scanner.py --module "Blockchain 4"
+    python3 hsmw_noten_scanner.py --module "Beispielmodul 1"
 """
 
 from __future__ import annotations
