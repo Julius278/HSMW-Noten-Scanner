@@ -110,13 +110,23 @@ function updateJar(jar, hostname, res) {
     }
 }
 
+// Manche Uni-Systeme/WAFs blockieren oder liefern anderen Inhalt bei
+// Anfragen ohne "normalen" Browser-User-Agent - deshalb wird hier bewusst
+// ein üblicher Browser-Header mitgeschickt.
+const DEFAULT_HEADERS = {
+    'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+};
+
 async function fetchWithCookies(url, options, jar) {
     let currentUrl = url;
     let opts = Object.assign({}, options, { redirect: 'manual' });
 
     for (let redirects = 0; redirects < 10; redirects++) {
         const hostname = new URL(currentUrl).hostname;
-        opts.headers = Object.assign({}, opts.headers, { Cookie: cookieHeader(jar, hostname) });
+        opts.headers = Object.assign({}, DEFAULT_HEADERS, opts.headers, { Cookie: cookieHeader(jar, hostname) });
         if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
             opts.signal = AbortSignal.timeout(CONFIG.requestTimeoutMs);
         }
@@ -259,7 +269,11 @@ async function login(jar) {
     let $ = cheerio.load(startPage.body);
 
     if ($('input[type=password]').length === 0) {
-        log('Kein Login-Formular gefunden, vermutlich bereits eingeloggt.');
+        log(
+            `Kein Login-Formular gefunden, vermutlich bereits eingeloggt. ` +
+                `(Status ${startPage.status}, gelandet auf ${startPage.url}, Titel: "${$('title').text().trim()}")`,
+        );
+        dumpDebug('no-login-form-assumed-logged-in', startPage.body);
         return startPage;
     }
 
