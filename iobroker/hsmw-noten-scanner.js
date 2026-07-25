@@ -70,13 +70,20 @@ const STATE_PREFIX = '0_userdata.0.hsmwNotenScanner.';
 
 const fetchFn = typeof fetch !== 'undefined' ? fetch : require('node-fetch');
 
-function cookieHeader(jar) {
-    return Object.entries(jar)
+// Cookies werden pro Hostname getrennt gespeichert (jar[hostname][name] = value).
+// Wichtig, da der Login über einen separaten Shibboleth-IdP-Host läuft, bevor
+// man zurück zum QIS/POS-Host (qispos.hs-mittweida.de) gelangt - beide könnten
+// z.B. denselben Cookie-Namen "JSESSIONID" verwenden, ein gemeinsamer Jar würde
+// die Sessions durcheinanderbringen.
+function cookieHeader(jar, hostname) {
+    const store = jar[hostname];
+    if (!store) return '';
+    return Object.entries(store)
         .map(([k, v]) => `${k}=${v}`)
         .join('; ');
 }
 
-function updateJar(jar, res) {
+function updateJar(jar, hostname, res) {
     let setCookieHeaders = [];
     if (typeof res.headers.getSetCookie === 'function') {
         setCookieHeaders = res.headers.getSetCookie();
@@ -85,11 +92,13 @@ function updateJar(jar, res) {
     } else if (res.headers.get('set-cookie')) {
         setCookieHeaders = [res.headers.get('set-cookie')];
     }
+    if (setCookieHeaders.length === 0) return;
+    if (!jar[hostname]) jar[hostname] = {};
     for (const sc of setCookieHeaders) {
         const pair = sc.split(';')[0];
         const idx = pair.indexOf('=');
         if (idx === -1) continue;
-        jar[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+        jar[hostname][pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
     }
 }
 
@@ -98,17 +107,18 @@ async function fetchWithCookies(url, options, jar) {
     let opts = Object.assign({}, options, { redirect: 'manual' });
 
     for (let redirects = 0; redirects < 10; redirects++) {
-        opts.headers = Object.assign({}, opts.headers, { Cookie: cookieHeader(jar) });
+        const hostname = new URL(currentUrl).hostname;
+        opts.headers = Object.assign({}, opts.headers, { Cookie: cookieHeader(jar, hostname) });
         if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
             opts.signal = AbortSignal.timeout(CONFIG.requestTimeoutMs);
         }
 
         const res = await fetchFn(currentUrl, opts);
-        updateJar(jar, res);
+        updateJar(jar, hostname, res);
 
         if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
             currentUrl = new URL(res.headers.get('location'), currentUrl).toString();
-            opts = { method: 'GET', headers: { Cookie: cookieHeader(jar) }, redirect: 'manual' };
+            opts = { method: 'GET', redirect: 'manual' };
             continue;
         }
 
@@ -139,19 +149,29 @@ function collectFormParams($, form, overrides) {
     const params = new URLSearchParams();
     let submitAdded = false;
 
-    form.find('input, select, textarea').each((i, el) => {
+    // <button> ohne explizites type-Attribut ist per HTML-Spezifikation ein
+    // Submit-Button (siehe z.B. den Shibboleth-Login-Knopf
+    // <button type="submit" name="_eventId_proceed">Anmelden</button>) - muss
+    // also mitberücksichtigt werden, nicht nur <input type=submit>.
+    form.find('input, select, textarea, button').each((i, el) => {
         const input = $(el);
         const name = input.attr('name');
         if (!name) return;
         const tag = el.tagName.toLowerCase();
-        const type = tag === 'input' ? (input.attr('type') || 'text').toLowerCase() : tag;
+        const type =
+            tag === 'input' ? (input.attr('type') || 'text').toLowerCase()
+            : tag === 'button' ? (input.attr('type') || 'submit').toLowerCase()
+            : tag;
 
-        if (type === 'submit' || type === 'image' || type === 'button') {
+        if (type === 'submit' || type === 'image') {
             if (!submitAdded && overrides.preferredSubmit !== false) {
                 params.set(name, input.attr('value') || '');
                 submitAdded = true;
             }
             return;
+        }
+        if (type === 'button' || type === 'reset') {
+            return; // nicht Teil der übermittelten Formulardaten
         }
         if (type === 'checkbox' || type === 'radio') {
             if (input.is(':checked') || input.attr('checked') !== undefined) {
@@ -188,6 +208,37 @@ async function submitForm($, form, pageUrl, jar, overrides) {
     }
     const getUrl = actionUrl + (actionUrl.includes('?') ? '&' : '?') + params.toString();
     return fetchWithCookies(getUrl, { method: 'GET' }, jar);
+}
+
+// ---------------------------------------------------------------------------
+// Shibboleth/SAML-Zwischenseiten
+// ---------------------------------------------------------------------------
+
+// Nach einem erfolgreichen Login beim Shibboleth-IdP folgt meist keine direkte
+// Weiterleitung, sondern eine Zwischenseite mit einem versteckten Formular
+// (SAML POST-Binding: Felder "SAMLResponse"/"RelayState"), das sich per
+// JavaScript selbst an den Service Provider (qispos.hs-mittweida.de) zurück-
+// postet. Da wir kein JS ausführen, senden wir dieses Formular hier manuell ab.
+async function followIntermediateForms(jar, page, maxSteps = 5) {
+    let current = page;
+    for (let i = 0; i < maxSteps; i++) {
+        const $ = cheerio.load(current.body);
+        if ($('input[type=password]').length > 0) return current;
+
+        const relayForm = $('form')
+            .filter(
+                (idx, el) =>
+                    $(el).find('input[name=SAMLResponse]').length > 0 ||
+                    $(el).find('input[name=SAMLart]').length > 0,
+            )
+            .first();
+
+        if (relayForm.length === 0) return current;
+
+        log('Folge automatischem SSO-Weiterleitungsformular...');
+        current = await submitForm($, relayForm, current.url, jar, {});
+    }
+    return current;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,9 +279,11 @@ async function login(jar) {
 
     const passwordField = form.find('input[type=password]').first().attr('name');
 
-    const loginRes = await submitForm($, form, startPage.url, jar, {
+    let loginRes = await submitForm($, form, startPage.url, jar, {
         fields: { [usernameField]: CONFIG.username, [passwordField]: CONFIG.password },
     });
+
+    loginRes = await followIntermediateForms(jar, loginRes);
 
     const $$ = cheerio.load(loginRes.body);
     if ($$('input[type=password]').length > 0) {

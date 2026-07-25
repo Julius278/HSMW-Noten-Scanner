@@ -19,13 +19,24 @@ sondern einfache HTTP-Requests (`fetch`) + HTML-Parsing (`cheerio`) mit
 manueller Cookie-Verwaltung — das ist deutlich leichtgewichtiger und läuft
 problemlos auch auf einem Raspberry Pi.
 
-Login-Formular- und Button-Erkennung sind generisch gehalten (erstes
-Passwortfeld im ersten `<form>` mit Passwortfeld = Login-Formular, erstes
-Textfeld darin = Benutzername), da die genaue Portal-Struktur ohne gültige
-Zugangsdaten nicht live geprüft werden konnte. Schlägt ein Schritt fehl, wird
-das im ioBroker-Log gemeldet; über `CONFIG.debugDir` kann zusätzlich ein
-HTML-Snapshot der zuletzt geladenen Seite auf die Platte geschrieben werden,
-um die Selektoren in `iobroker/hsmw-noten-scanner.js` bei Bedarf anzupassen.
+Der Login läuft über den zentralen **Shibboleth-SSO** der Hochschule
+Mittweida (separater IdP-Host, SAML2-POST-Binding). Das Script:
+
+- erkennt das Login-Formular (Felder `j_username`/`j_password`) generisch,
+- übermittelt Cookies **pro Hostname getrennt**, da IdP und QIS/POS-Portal
+  unterschiedliche Hosts sind und ggf. gleich benannte Session-Cookies
+  verwenden,
+- folgt nach erfolgreichem Login automatisch der SAML-Zwischenseite
+  (verstecktes Formular mit `SAMLResponse`/`RelayState`), die sich im echten
+  Browser per JavaScript selbst zurück zum QIS/POS-Portal postet.
+
+Button-Erkennung für die Notenübersicht selbst ist weiterhin generisch
+gehalten (Linktext konfigurierbar über `buttonCandidates`), da der Aufbau der
+Notenseite nach dem Login nicht eingesehen werden konnte. Schlägt ein Schritt
+fehl, wird das im ioBroker-Log gemeldet; über `CONFIG.debugDir` kann
+zusätzlich ein HTML-Snapshot der zuletzt geladenen Seite auf die Platte
+geschrieben werden, um die Selektoren in `iobroker/hsmw-noten-scanner.js` bei
+Bedarf anzupassen.
 
 ## Setup in ioBroker
 
