@@ -33,13 +33,18 @@ Mittweida (separater IdP-Host, SAML2-POST-Binding). Das Script:
   (verstecktes Formular mit `SAMLResponse`/`RelayState`), die sich im echten
   Browser per JavaScript selbst zurück zum QIS/POS-Portal postet.
 
-Die Tabellen-Erkennung der eigentlichen Notenliste (`parseGradesTable`/
-`findTargetGrade`) ist bewusst generisch gehalten, da der exakte
-Spaltenaufbau der Notentabelle noch nicht eingesehen werden konnte. Schlägt
-ein Schritt fehl, wird das im ioBroker-Log gemeldet; über `CONFIG.debugDir`
-kann zusätzlich ein HTML-Snapshot der zuletzt geladenen Seite auf die Platte
-geschrieben werden, um die Selektoren in `iobroker/hsmw-noten-scanner.js` bei
-Bedarf anzupassen.
+Die Notentabelle hat die Spalten `PNr, Vert, S, Modul, Credits/Wichtung, Art,
+Fach, Note, Versuch, Status/Vermerk, PDatum, Meldung`. Gesucht wird in der
+Spalte **Fach** (voller Modulname, z.B. "Blockchain 1"); eine leere **Note**-
+Zelle bedeutet "noch nicht eingetragen" (z.B. bei Status `AN` = angemeldet,
+aber noch offen). `TARGET_MODULE` sollte also der volle oder eindeutige
+Teilstring des Fach-Namens sein, nicht die kurze Modul-Kennung (Spalte
+"Modul", z.B. "8102(M)").
+
+Schlägt ein Schritt fehl, wird das im ioBroker-Log gemeldet; über
+`CONFIG.debugDir` kann zusätzlich ein HTML-Snapshot der zuletzt geladenen
+Seite auf die Platte geschrieben werden, um die Selektoren in
+`iobroker/hsmw-noten-scanner.js` bei Bedarf anzupassen.
 
 ## Setup in ioBroker
 

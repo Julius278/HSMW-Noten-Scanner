@@ -17,13 +17,13 @@
 // aller Module (inkl. noch nicht bewerteter) zeigt erst die Ansicht
 // "Alle Fächer anzeigen" (?view=full).
 //
-// Die eigentliche Notentabelle (Spaltenaufbau, genaue Darstellung von noch
-// nicht eingetragenen Noten) konnte noch nicht eingesehen werden - die
-// Tabellen-Erkennung in parseGradesTable()/findTargetGrade() ist deshalb
-// bewusst generisch gehalten. Schlägt ein Schritt fehl, wird eine
-// Fehlermeldung geloggt; über CONFIG.debugDir kann zusätzlich ein
-// HTML-Snapshot auf die Platte geschrieben werden, um die Selektoren unten
-// anzupassen.
+// Die Notentabelle hat die Spalten PNr, Vert, S, Modul, Credits/Wichtung,
+// Art, Fach, Note, Versuch, Status/Vermerk, PDatum, Meldung. Gesucht wird in
+// der "Fach"-Spalte (voller Modulname); eine leere "Note"-Zelle bedeutet
+// "noch nicht eingetragen" (z.B. bei Status "AN" = angemeldet, aber offen).
+// Schlägt ein Schritt fehl, wird eine Fehlermeldung geloggt; über
+// CONFIG.debugDir kann zusätzlich ein HTML-Snapshot auf die Platte
+// geschrieben werden, um die Selektoren unten anzupassen.
 
 const cheerio = require('cheerio');
 const fs = require('fs');
@@ -323,9 +323,10 @@ async function openGradesView(jar, page) {
     if (fullViewLink.length > 0) {
         fullViewUrl = new URL(fullViewLink.attr('href'), page.url).toString();
     } else {
-        const u = new URL(page.url);
-        u.searchParams.set('view', 'full');
-        fullViewUrl = u.toString();
+        // Laut echtem HTML-Export liegt der Link immer unter dem Root-Pfad
+        // ("/?view=full"), unabhängig vom aktuellen Pfad - daher hier bewusst
+        // nicht den aktuellen Pfad wiederverwenden.
+        fullViewUrl = new URL('/?view=full', page.url).toString();
     }
 
     log('Öffne vollständige Notenübersicht (alle Fächer)...');
@@ -347,38 +348,56 @@ async function openGradesView(jar, page) {
 // Notentabelle parsen
 // ---------------------------------------------------------------------------
 
+// Echte Tabellenstruktur (laut HTML-Export der Notenübersicht):
+// Spalten sind PNr, Vert, S, Modul, Credits/Wichtung, Art, Fach, Note,
+// Versuch, Status/Vermerk, PDatum, Meldung. Die Kopfzeile wird ausgelesen,
+// um die Spalten "Fach" und "Note" unabhängig von ihrer Position zu finden
+// (robuster als eine feste Spaltennummer). Eine leere "Note"-Zelle bedeutet
+// "noch nicht bewertet" (z.B. Status "AN" = angemeldet, aber noch offen).
 function parseGradesTable(html) {
     const $ = cheerio.load(html);
-    const rows = [];
+    const tables = [];
     $('table').each((i, table) => {
-        $(table)
-            .find('tr')
-            .each((j, tr) => {
-                const cells = $(tr)
-                    .find('td')
-                    .map((k, td) => $(td).text().trim())
-                    .get();
-                if (cells.length === 0 || cells.every((c) => !c)) return;
-                rows.push(cells);
-            });
+        const $table = $(table);
+        const headers = $table
+            .find('thead th')
+            .map((k, th) => $(th).text().trim())
+            .get();
+        const rows = [];
+        $table.find('tbody tr, tr').each((j, tr) => {
+            if ($(tr).parents('thead').length > 0) return;
+            const cells = $(tr)
+                .find('td')
+                .map((k, td) => $(td).text().replace(/\s+/g, ' ').trim())
+                .get();
+            if (cells.length === 0 || cells.every((c) => !c)) return;
+            rows.push(cells);
+        });
+        if (rows.length > 0) tables.push({ headers, rows });
     });
-    return rows;
+    return tables;
 }
 
-function findTargetGrade(rows, targetModule) {
+function findTargetGrade(tables, targetModule) {
     const targetLower = targetModule.toLowerCase();
-    for (const cells of rows) {
-        if (cells.some((c) => c.toLowerCase().includes(targetLower))) {
-            // Note ist meist die letzte nicht-leere Zelle, die nicht der
-            // Modulname selbst ist. Grenze bewusst nicht zu eng (numerische
-            // Noten wie "2,3" ebenso wie Textnoten wie "bestanden" /
-            // "nicht bestanden" sollen erfasst werden).
-            let grade = null;
-            for (let i = cells.length - 1; i >= 0; i--) {
-                const c = cells[i].trim();
-                if (c && c.toLowerCase() !== targetLower && c.length <= 30) {
-                    grade = c;
-                    break;
+    for (const { headers, rows } of tables) {
+        const noteIdx = headers.findIndex((h) => h.toLowerCase() === 'note');
+        for (const cells of rows) {
+            if (!cells.some((c) => c.toLowerCase().includes(targetLower))) continue;
+
+            let grade;
+            if (noteIdx >= 0 && noteIdx < cells.length) {
+                grade = cells[noteIdx].trim() || null;
+            } else {
+                // Fallback, falls die Kopfzeile nicht erkannt wurde: letzte
+                // nicht-leere Zelle, die nicht der gesuchte Text selbst ist.
+                grade = null;
+                for (let i = cells.length - 1; i >= 0; i--) {
+                    const c = cells[i].trim();
+                    if (c && c.toLowerCase() !== targetLower && c.length <= 30) {
+                        grade = c;
+                        break;
+                    }
                 }
             }
             return { rowText: cells.join(' | '), grade };
@@ -412,15 +431,19 @@ async function ensureStates() {
 // Werte, die als "noch keine Note eingetragen" gewertet werden. Da die echte
 // Notentabelle noch nicht eingesehen werden konnte, ist diese Liste eine
 // Vermutung - bei Bedarf anhand von CONFIG.debugDir-Snapshots anpassen.
-const UNGRADED_VALUES = ['-', '--', 'n.b.', 'offen', 'noch nicht bewertet', 'nicht bewertet', 'ausstehend'];
+// Laut echtem HTML-Export ist die "Note"-Zelle schlicht leer, solange keine
+// Note eingetragen ist (z.B. bei Status "AN" = angemeldet). Zusätzliche
+// Platzhalter zur Sicherheit, falls ein Modultyp doch Text statt Leerzelle
+// verwendet.
+const UNGRADED_VALUES = ['-', '--', 'n.b.', 'offen'];
 
 async function checkGrades() {
     const jar = {};
     try {
         const startPage = await login(jar);
         const gradesPage = await openGradesView(jar, startPage);
-        const rows = parseGradesTable(gradesPage.body);
-        const result = findTargetGrade(rows, CONFIG.targetModule);
+        const tables = parseGradesTable(gradesPage.body);
+        const result = findTargetGrade(tables, CONFIG.targetModule);
         const now = new Date().toISOString();
 
         if (!result) {
