@@ -8,6 +8,7 @@ Gleicher Ablauf — Shibboleth-SSO-Login (inkl. SPNEGO-Bypass), Notenübersicht
 | | ioBroker-Script | Python-Variante |
 |---|---|---|
 | Konfiguration | `CONFIG`-Block im Quelltext | `config.toml` + Umgebungsvariablen |
+| Mehrere Module | `targetModules` | `target_modules` |
 | HTML-Parsing | `cheerio` | `beautifulsoup4` |
 | HTTP | `fetch` + eigenes Cookie-Handling | `requests.Session` |
 | Zustand | ioBroker-States | JSON-Datei (`state.json`) |

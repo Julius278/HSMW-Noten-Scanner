@@ -1,0 +1,15 @@
+{
+  "name": "hsmw-noten-scanner-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nur für die Tests von hsmw-noten-scanner.js. Das Script selbst wird in die ioBroker-Scripts-Oberfläche kopiert; dort liefert der javascript-Adapter die Module (cheerio über 'Zusätzliche NPM-Module'). Für den Produktivbetrieb ist dieses package.json nicht nötig.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20.18.1"
+  },
+  "devDependencies": {
+    "cheerio": "^1.0.0"
+  }
+}

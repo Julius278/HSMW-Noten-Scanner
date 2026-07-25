@@ -3,7 +3,7 @@
 [![Tests](https://github.com/Julius278/HSMW-Noten-Scanner/actions/workflows/tests.yml/badge.svg)](https://github.com/Julius278/HSMW-Noten-Scanner/actions/workflows/tests.yml)
 
 Loggt sich in das QIS/POS-Notenportal der Hochschule Mittweida ein, öffnet die
-Notenübersicht und prüft, ob für ein bestimmtes Modul bereits eine Note
+Notenübersicht und prüft für ein oder mehrere Module, ob bereits eine Note
 eingetragen ist. Es gibt zwei Umsetzungen mit identischem Ablauf:
 
 - **[`iobroker/hsmw-noten-scanner.js`](iobroker/hsmw-noten-scanner.js)** —
@@ -22,7 +22,7 @@ Ablauf (identisch in beiden Varianten):
    anzeigen" (`?view=full`), die auch noch nicht bewertete Module zeigt
 4. Bestätigt bei Bedarf einmalig die Rechtsbehelfsbelehrung (Formular
    `confirm_marks`)
-5. Sucht die Zeile des konfigurierten Moduls in der Ergebnistabelle
+5. Sucht die Zeilen der konfigurierten Module in der Ergebnistabelle
 6. Loggt den Stand und speichert ihn (ioBroker-States bzw. `state.json`); nur
    beim Übergang von "nicht eingetragen" zu "eingetragen" wird zusätzlich
    benachrichtigt
@@ -68,8 +68,16 @@ Seite auf die Platte geschrieben werden, um die Selektoren in
 
 1. **Adapter-Instanz vorbereiten:** In den Einstellungen der `javascript`-Adapter-Instanz
    unter "Zusätzliche NPM-Module" das Modul **`cheerio`** eintragen und die
-   Instanz neu starten. (Node.js ≥ 18 wird vorausgesetzt, liefert dann
-   globales `fetch()`. Bei älterem Node zusätzlich `node-fetch` eintragen.)
+   Instanz neu starten.
+
+   Zur Node-Version: Das Script selbst braucht **Node.js ≥ 18** (liefert
+   globales `fetch()`; bei älterem Node zusätzlich `node-fetch` eintragen).
+   Das aktuelle `cheerio` (1.x) setzt allerdings **Node.js ≥ 20.18.1** voraus
+   — es lädt `undici`, das den erst ab Node 20 globalen `File`-Konstruktor
+   benötigt, sonst scheitert schon das Laden mit `File is not defined`. In der
+   Praxis also **Node 20 oder neuer**. Wer auf Node 18 festsitzt, trägt
+   stattdessen `cheerio@1.0.0-rc.12` ein — damit läuft das Script unverändert,
+   die verwendeten cheerio-Funktionen sind in beiden Versionslinien gleich.
 2. **Pushover-Adapter** installieren/einrichten (Instanz z.B. `pushover.0`),
    falls noch nicht vorhanden.
 3. Neues **JavaScript-Script** (Typ „Javascript/js“) in der ioBroker-Scripts-Oberfläche
@@ -77,16 +85,41 @@ Seite auf die Platte geschrieben werden, um die Selektoren in
    hineinkopieren.
 4. Im `CONFIG`-Block am Anfang des Scripts anpassen:
    - `username` / `password` — deine QIS-Zugangsdaten
-   - `targetModule` — Name/Teilstring des zu überwachenden Moduls, z.B. `Beispielmodul 1`
+   - `targetModules` — Liste der zu überwachenden Module, z.B.
+     `['Beispielmodul 1', 'Beispielmodul 2']`. Ein einzelner String ist
+     ebenfalls erlaubt (`targetModules: 'Beispielmodul 1'`).
    - `pushoverInstance` / `pushoverSound` — z.B. `pushover.0`
    - `cronSchedule` — wie oft geprüft werden soll, Standard alle 15 Minuten
 5. Script aktivieren/starten.
 
-Der aktuelle Stand wird unter `0_userdata.0.hsmwNotenScanner.*` als States
-abgelegt (`lastGrade`, `lastGraded`, `lastCheck`) — darüber lässt sich der
-Status auch in VIS o.ä. anzeigen. Eine Pushover-Benachrichtigung wird nur
-beim Übergang von "nicht eingetragen" zu "eingetragen" verschickt, nicht bei
-jedem Lauf erneut.
+Alle Module werden in **einem** Durchlauf geprüft: einmal einloggen, einmal die
+Notenübersicht laden, dann jede konfigurierte Modulzeile darin suchen. Pro neu
+eingetragener Note geht genau eine Pushover-Nachricht raus.
+
+### States
+
+Der aktuelle Stand liegt unter `0_userdata.0.hsmwNotenScanner.*`, damit er sich
+auch in VIS o.ä. anzeigen lässt:
+
+| State | Bedeutung |
+|---|---|
+| `lastCheck` | Zeitstempel des letzten Durchlaufs |
+| `modules.<Modul>.name` | Modulname wie konfiguriert |
+| `modules.<Modul>.grade` | eingetragene Note, leer solange offen |
+| `modules.<Modul>.graded` | `true`, sobald eine Note steht |
+| `modules.<Modul>.lastCheck` | Zeitstempel für dieses Modul |
+
+`<Modul>` ist der Modulname, reduziert auf `A–Z`, `a–z`, `0–9` und `_` (ioBroker
+erlaubt in State-IDs keine Punkte); fallen zwei Namen dabei auf dieselbe ID,
+wird durchnummeriert. Der Originalname steht darum zusätzlich im State `name`.
+
+Eine Pushover-Benachrichtigung wird nur beim Übergang von "nicht eingetragen"
+zu "eingetragen" verschickt, nicht bei jedem Lauf erneut.
+
+Die früheren Einzel-States `lastGrade` und `lastGraded` gibt es weiterhin; sie
+spiegeln das erste konfigurierte Modul, sodass bestehende VIS-Widgets aus
+älteren Versionen unverändert funktionieren. Auch eine alte Konfiguration mit
+`targetModule` (Einzahl) läuft ohne Änderung weiter.
 
 ## Anpassung bei Problemen
 
@@ -112,17 +145,20 @@ bei jedem Push und Pull Request:
   HTTP-Server, der den per HAR-Mitschnitt verifizierten Login-Ablauf nachbildet;
   es wird bewusst keine Verbindung zum echten Hochschulportal aufgebaut und es
   sind keine Zugangsdaten nötig.
-- **ioBroker-Script** — `node --check` auf `iobroker/hsmw-noten-scanner.js`.
-  Eine echte Testsuite gibt es dafür nicht, da das Script die Globals der
-  Adapter-Sandbox (`log`, `schedule`, `sendTo`, ...) erwartet; der Syntax-Check
-  fängt aber Tippfehler ab.
+- **ioBroker-Script** — die Testsuite aus `iobroker/test/` auf Node.js 20, 22
+  und 24 (`npm test`, Node-eigener Test-Runner). Die Globals der Adapter-Sandbox
+  (`log`, `schedule`, `sendTo`, `createStateAsync`, ...) werden gestubbt und das
+  Script gegen denselben nachgebildeten Login-Ablauf laufen gelassen. Dazu
+  `node --check` als Syntax-Prüfung. Node 18 ist nicht dabei, weil das aktuelle
+  `cheerio` dort nicht lädt (siehe Hinweis zur Node-Version oben).
 
 Lokal ausführen:
 
 ```bash
 pip install -r python/requirements.txt
 python -m unittest discover -s python -v
-node --check iobroker/hsmw-noten-scanner.js
+
+cd iobroker && npm install && npm test
 ```
 
 ## Sicherheitshinweis

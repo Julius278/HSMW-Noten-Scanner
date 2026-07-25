@@ -43,8 +43,18 @@ jobs:
         run: python -m unittest discover -s python -v
 
   javascript:
-    name: ioBroker-Script prüfen
+    name: ioBroker-Script (Node.js ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Das Script selbst käme mit Node 18 aus (globales fetch()), die
+        # aktuelle cheerio-Version aber nicht: cheerio 1.x setzt Node
+        # >=20.18.1 voraus und lädt undici, das den erst ab Node 20 globalen
+        # File-Konstruktor braucht ("File is not defined"). Getestet wird
+        # daher ab 20. Für Node 18 muss cheerio 1.0.0-rc.12 verwendet werden
+        # (siehe README).
+        node-version: ["20", "22", "24"]
 
     steps:
       - uses: actions/checkout@v4
@@ -52,10 +62,21 @@ jobs:
       - name: Node.js einrichten
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: iobroker/package-lock.json
+
+      - name: Abhängigkeiten installieren
+        run: npm ci
+        working-directory: iobroker
 
       - name: Syntax prüfen
-        # Für das ioBroker-Script gibt es keine Testsuite (es läuft nur in der
-        # Adapter-Sandbox mit deren Globals). Der Syntax-Check verhindert
-        # zumindest, dass ein Tippfehler unbemerkt ins Repository kommt.
-        run: node --check iobroker/hsmw-noten-scanner.js
+        run: node --check hsmw-noten-scanner.js
+        working-directory: iobroker
+
+      - name: Tests ausführen
+        # Die Tests stubben die ioBroker-Globals und starten einen lokalen
+        # HTTP-Server, der den Login-Ablauf nachbildet - auch hier ohne
+        # Verbindung zum echten Hochschulportal.
+        run: npm test
+        working-directory: iobroker

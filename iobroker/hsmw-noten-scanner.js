@@ -1,8 +1,9 @@
 // HSMW Noten-Scanner für ioBroker (javascript-Adapter)
 //
 // Loggt sich in das QIS/POS-Notenportal der Hochschule Mittweida ein, öffnet
-// die Notenübersicht und prüft, ob für ein bestimmtes Modul bereits eine Note
-// eingetragen ist. Benachrichtigung erfolgt per Pushover-Adapter.
+// die Notenübersicht und prüft für ein oder mehrere Module, ob bereits eine
+// Note eingetragen ist. Benachrichtigung erfolgt per Pushover-Adapter, einmal
+// pro neu eingetragener Note.
 //
 // Voraussetzungen (Instanz-Einstellungen des javascript-Adapters):
 //   - Node.js >= 18 (liefert globales fetch()). Falls älter: Modul
@@ -44,9 +45,10 @@ const CONFIG = {
     // Startseite (Login -> Notenanzeige)
     url: 'https://qispos.hs-mittweida.de/noten?intranet&m',
 
-    // Name/Teilstring des Moduls bzw. der Prüfung, dessen Note überwacht
-    // werden soll (Groß-/Kleinschreibung wird ignoriert)
-    targetModule: 'dein_modulname',
+    // Namen/Teilstrings der Module bzw. Prüfungen, deren Noten überwacht
+    // werden sollen (Groß-/Kleinschreibung wird ignoriert). Ein einzelner
+    // String ist ebenfalls erlaubt:  targetModules: 'dein_modulname'
+    targetModules: ['dein_modulname'],
 
     // Pushover-Adapterinstanz und optionaler Sound
     pushoverInstance: 'pushover.0',
@@ -69,6 +71,64 @@ const CONFIG = {
 };
 
 const STATE_PREFIX = '0_userdata.0.hsmwNotenScanner.';
+
+// ---------------------------------------------------------------------------
+// Zu überwachende Module
+// ---------------------------------------------------------------------------
+
+// Wird beim Scriptstart einmal aus CONFIG abgeleitet: die bereinigte Modulliste
+// und die Zuordnung Modulname -> State-ID.
+let TARGET_MODULES = [];
+const STATE_IDS = new Map();
+
+// Akzeptiert ein Array, einen einzelnen String und - damit ältere
+// Konfigurationen weiterlaufen - auch das frühere Einzelfeld
+// CONFIG.targetModule. Doppelte Einträge werden entfernt (ohne Rücksicht auf
+// Groß-/Kleinschreibung), damit ein Modul nicht mehrfach gemeldet wird.
+function resolveTargetModules() {
+    const normalize = (value) => {
+        const list = Array.isArray(value) ? value : [value];
+        return list
+            .filter((m) => typeof m === 'string')
+            .map((m) => m.trim())
+            .filter((m) => m.length > 0);
+    };
+
+    const configured = normalize(CONFIG.targetModules);
+    const modules = configured.length > 0 ? configured : normalize(CONFIG.targetModule);
+
+    const seen = new Set();
+    return modules.filter((m) => {
+        const key = m.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+// ioBroker-State-IDs dürfen keinen Punkt (das ist das Trennzeichen im
+// Objektbaum) und möglichst keine Sonderzeichen/Leerzeichen enthalten - der
+// Modulname wird daher auf [A-Za-z0-9_] reduziert. Falls zwei Modulnamen dabei
+// auf dieselbe ID fallen (z.B. "Modul 1" und "Modul-1"), wird durchnummeriert.
+function buildStateIds(modules) {
+    const ids = new Map();
+    const used = new Set();
+    for (const moduleName of modules) {
+        const base =
+            moduleName
+                .replace(/[^A-Za-z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '') || 'modul';
+        let id = base;
+        for (let i = 2; used.has(id); i++) id = `${base}_${i}`;
+        used.add(id);
+        ids.set(moduleName, id);
+    }
+    return ids;
+}
+
+function moduleStatePrefix(moduleName) {
+    return `${STATE_PREFIX}modules.${STATE_IDS.get(moduleName)}.`;
+}
 
 // ---------------------------------------------------------------------------
 // HTTP-Hilfsfunktionen (fetch + manuelles Cookie-Handling, da diese Portale
@@ -489,9 +549,24 @@ function notify(message) {
 // ---------------------------------------------------------------------------
 
 async function ensureStates() {
+    await createStateAsync(STATE_PREFIX + 'lastCheck', '');
+
+    // Pro Modul ein eigener Zweig unter ".modules". "name" hält den
+    // Originalnamen, da die State-ID Sonderzeichen und Leerzeichen ersetzt.
+    for (const moduleName of TARGET_MODULES) {
+        const prefix = moduleStatePrefix(moduleName);
+        await createStateAsync(prefix + 'name', moduleName);
+        await createStateAsync(prefix + 'grade', '');
+        await createStateAsync(prefix + 'graded', false);
+        await createStateAsync(prefix + 'lastCheck', '');
+        await setStateAsync(prefix + 'name', moduleName, true);
+    }
+
+    // Die alten Einzel-States bleiben erhalten und spiegeln weiterhin das
+    // erste konfigurierte Modul - so funktionieren bestehende VIS-Widgets und
+    // Skripte aus früheren Versionen unverändert weiter.
     await createStateAsync(STATE_PREFIX + 'lastGrade', '');
     await createStateAsync(STATE_PREFIX + 'lastGraded', false);
-    await createStateAsync(STATE_PREFIX + 'lastCheck', '');
 }
 
 // Werte, die als "noch keine Note eingetragen" gewertet werden. Da die echte
@@ -503,41 +578,65 @@ async function ensureStates() {
 // verwendet.
 const UNGRADED_VALUES = ['-', '--', 'n.b.', 'offen'];
 
+// Prüft alle konfigurierten Module in einem Durchlauf: einmal einloggen, einmal
+// die Notenübersicht laden und parsen, dann jede Modulzeile darin suchen.
 async function checkGrades() {
     const jar = {};
     try {
         const startPage = await login(jar);
         const gradesPage = await openGradesView(jar, startPage);
         const tables = parseGradesTable(gradesPage.body);
-        const result = findTargetGrade(tables, CONFIG.targetModule);
         const now = new Date().toISOString();
 
-        if (!result) {
-            log(`Modul "${CONFIG.targetModule}" wurde in der Notenübersicht nicht gefunden.`, 'warn');
-            dumpDebug('module-not-found', gradesPage.body);
-            await setStateAsync(STATE_PREFIX + 'lastCheck', now, true);
-            return;
+        let anyMissing = false;
+        let firstModuleGrade = null;
+
+        for (const moduleName of TARGET_MODULES) {
+            const prefix = moduleStatePrefix(moduleName);
+            const result = findTargetGrade(tables, moduleName);
+
+            if (!result) {
+                log(`Modul "${moduleName}" wurde in der Notenübersicht nicht gefunden.`, 'warn');
+                anyMissing = true;
+                await setStateAsync(prefix + 'lastCheck', now, true);
+                continue;
+            }
+
+            const grade = result.grade;
+            const isGraded = !!grade && !UNGRADED_VALUES.includes(grade.toLowerCase());
+
+            if (isGraded) {
+                log(`Note für "${moduleName}" ist eingetragen: ${grade}`);
+            } else {
+                log(`Note für "${moduleName}" ist noch nicht eingetragen.`);
+            }
+
+            const prevState = await getStateAsync(prefix + 'graded');
+            const wasGradedBefore = prevState ? prevState.val === true : false;
+
+            if (isGraded && !wasGradedBefore) {
+                log(`Neuer Notenstand für "${moduleName}" erkannt -> sende Pushover-Benachrichtigung.`);
+                notify(`Note für ${moduleName} wurde eingetragen: ${grade}`);
+            }
+
+            await setStateAsync(prefix + 'grade', grade || '', true);
+            await setStateAsync(prefix + 'graded', isGraded, true);
+            await setStateAsync(prefix + 'lastCheck', now, true);
+
+            if (moduleName === TARGET_MODULES[0]) {
+                firstModuleGrade = { grade: grade || '', isGraded };
+            }
         }
 
-        const grade = result.grade;
-        const isGraded = !!grade && !UNGRADED_VALUES.includes(grade.toLowerCase());
+        // Ein Snapshot reicht, auch wenn mehrere Module gefehlt haben - es ist
+        // dieselbe Seite.
+        if (anyMissing) dumpDebug('module-not-found', gradesPage.body);
 
-        if (isGraded) {
-            log(`Note für "${CONFIG.targetModule}" ist eingetragen: ${grade}`);
-        } else {
-            log(`Note für "${CONFIG.targetModule}" ist noch nicht eingetragen.`);
+        // Alte Einzel-States weiterhin mit dem ersten Modul versorgen.
+        if (firstModuleGrade) {
+            await setStateAsync(STATE_PREFIX + 'lastGrade', firstModuleGrade.grade, true);
+            await setStateAsync(STATE_PREFIX + 'lastGraded', firstModuleGrade.isGraded, true);
         }
-
-        const prevState = await getStateAsync(STATE_PREFIX + 'lastGraded');
-        const wasGradedBefore = prevState ? prevState.val === true : false;
-
-        if (isGraded && !wasGradedBefore) {
-            log('Neuer Notenstand erkannt -> sende Pushover-Benachrichtigung.');
-            notify(`Note für ${CONFIG.targetModule} wurde eingetragen: ${grade}`);
-        }
-
-        await setStateAsync(STATE_PREFIX + 'lastGrade', grade || '', true);
-        await setStateAsync(STATE_PREFIX + 'lastGraded', isGraded, true);
         await setStateAsync(STATE_PREFIX + 'lastCheck', now, true);
     } catch (err) {
         log('Fehler beim Prüfen der Noten: ' + err.message, 'error');
@@ -549,9 +648,21 @@ async function checkGrades() {
 // ---------------------------------------------------------------------------
 
 (async () => {
+    TARGET_MODULES = resolveTargetModules();
+    STATE_IDS.clear();
+    for (const [name, id] of buildStateIds(TARGET_MODULES)) STATE_IDS.set(name, id);
+
+    if (TARGET_MODULES.length === 0) {
+        log('CONFIG.targetModules ist leer - es wird nichts überwacht.', 'error');
+        return;
+    }
+
     await ensureStates();
     schedule(CONFIG.cronSchedule, () => checkGrades());
-    log(`HSMW Noten-Scanner gestartet, Zeitplan: ${CONFIG.cronSchedule}`);
+    log(
+        `HSMW Noten-Scanner gestartet, Zeitplan: ${CONFIG.cronSchedule}, ` +
+            `überwachte Module: ${TARGET_MODULES.join(', ')}`,
+    );
     if (CONFIG.runOnScriptStart) {
         checkGrades();
     }
