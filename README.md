@@ -1,11 +1,18 @@
-# HSMW Noten-Scanner (ioBroker)
+# HSMW Noten-Scanner
 
-Ein ioBroker-Script (javascript-Adapter), das sich in das QIS/POS-Notenportal
-der Hochschule Mittweida einloggt, die Notenübersicht öffnet und prüft, ob
-für ein bestimmtes Modul bereits eine Note eingetragen ist. Bei einer neu
-eingetragenen Note wird per Pushover-Adapter benachrichtigt.
+Loggt sich in das QIS/POS-Notenportal der Hochschule Mittweida ein, öffnet die
+Notenübersicht und prüft, ob für ein bestimmtes Modul bereits eine Note
+eingetragen ist. Es gibt zwei Umsetzungen mit identischem Ablauf:
 
-Ablauf:
+- **[`iobroker/hsmw-noten-scanner.js`](iobroker/hsmw-noten-scanner.js)** —
+  ioBroker-Script (javascript-Adapter), benachrichtigt per Pushover-Adapter.
+  Beschrieben im Rest dieser Datei.
+- **[`python/`](python/)** — eigenständige Python-Variante mit
+  `config.toml`/Umgebungsvariablen, Zustand in einer JSON-Datei und Betrieb per
+  cron oder `--loop`. Die Benachrichtigung wird dort derzeit nur geloggt.
+  Details in [`python/README.md`](python/README.md).
+
+Ablauf (identisch in beiden Varianten):
 
 1. Öffnet `https://qispos.hs-mittweida.de/noten?intranet&m`
 2. Loggt sich per Shibboleth-SSO (SAML2) mit Benutzername/Kennwort ein
@@ -14,29 +21,31 @@ Ablauf:
 4. Bestätigt bei Bedarf einmalig die Rechtsbehelfsbelehrung (Formular
    `confirm_marks`)
 5. Sucht die Zeile des konfigurierten Moduls in der Ergebnistabelle
-6. Meldet per `log()` und speichert den Stand in ioBroker-States; bei einer
-   **neuen** Note wird zusätzlich eine Pushover-Nachricht verschickt
+6. Loggt den Stand und speichert ihn (ioBroker-States bzw. `state.json`); nur
+   beim Übergang von "nicht eingetragen" zu "eingetragen" wird zusätzlich
+   benachrichtigt
 
-Das Script nutzt bewusst keinen Headless-Browser (kein Playwright/Puppeteer),
-sondern einfache HTTP-Requests (`fetch`) + HTML-Parsing (`cheerio`) mit
-manueller Cookie-Verwaltung — das ist deutlich leichtgewichtiger und läuft
-problemlos auch auf einem Raspberry Pi.
+Beide Varianten nutzen bewusst keinen Headless-Browser (kein
+Playwright/Puppeteer), sondern einfache HTTP-Requests + HTML-Parsing
+(`fetch`/`cheerio` bzw. `requests`/`beautifulsoup4`) — das ist deutlich
+leichtgewichtiger und läuft problemlos auch auf einem Raspberry Pi.
 
 Der Login läuft über den zentralen **Shibboleth-SSO** der Hochschule
-Mittweida (separater IdP-Host, SAML2-POST-Binding). Das Script:
+Mittweida (separater IdP-Host, SAML2-POST-Binding). Beide Varianten:
 
-- erkennt das Login-Formular (Felder `j_username`/`j_password`) generisch,
-- übermittelt Cookies **pro Hostname getrennt**, da IdP und QIS/POS-Portal
+- erkennen das Login-Formular (Felder `j_username`/`j_password`) generisch,
+- halten Cookies **pro Hostname getrennt** (eigenes Jar im ioBroker-Script,
+  `requests.Session` in der Python-Variante), da IdP und QIS/POS-Portal
   unterschiedliche Hosts sind und ggf. gleich benannte Session-Cookies
   verwenden,
-- sendet vor dem eigentlichen Login-Formular automatisch die technische
+- senden vor dem eigentlichen Login-Formular automatisch die technische
   "Client Storage Service"-Zwischenseite ab (JS-loses `<noscript>`-Formular)
-  und überspringt danach einen erfolglosen **SPNEGO/Kerberos**-Anmeldeversuch
+  und überspringen danach einen erfolglosen **SPNEGO/Kerberos**-Anmeldeversuch
   (`/idp/profile/Authn/SPNEGO/...`, endet ohne Domänen-Ticket immer mit
   Status 401) über dessen `/error`-Endpunkt, genau wie es ein Browser ohne
   Kerberos-Ticket ebenfalls tut — erst danach erscheint das echte
   Passwort-Formular,
-- folgt nach erfolgreichem Login automatisch der SAML-Zwischenseite
+- folgen nach erfolgreichem Login automatisch der SAML-Zwischenseite
   (verstecktes Formular mit `SAMLResponse`/`RelayState`), die sich im echten
   Browser per JavaScript selbst zurück zum QIS/POS-Portal postet.
 
