@@ -273,7 +273,12 @@ async function bypassIntermediateForms(jar, page, maxSteps = 5) {
         const $ = cheerio.load(current.body);
         if ($('input[type=password]').length > 0) return current;
 
-        const form = $('form').first();
+        // Nur POST-Formulare berücksichtigen: technische SSO-Zwischenschritte
+        // (Client Storage, SAML-Relay) sind immer POST, während z.B. das
+        // Such-Formular im Seitenkopf (GET) sonst fälschlich gegriffen würde.
+        const form = $('form')
+            .filter((idx, el) => (($(el).attr('method') || 'GET').toUpperCase() === 'POST'))
+            .first();
         if (form.length === 0) return current;
 
         log(`Sende technische Zwischenseite automatisch ab (Titel: "${$('title').text().trim()}")...`);
