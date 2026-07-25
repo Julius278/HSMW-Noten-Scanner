@@ -68,8 +68,16 @@ Seite auf die Platte geschrieben werden, um die Selektoren in
 
 1. **Adapter-Instanz vorbereiten:** In den Einstellungen der `javascript`-Adapter-Instanz
    unter "Zusätzliche NPM-Module" das Modul **`cheerio`** eintragen und die
-   Instanz neu starten. (Node.js ≥ 18 wird vorausgesetzt, liefert dann
-   globales `fetch()`. Bei älterem Node zusätzlich `node-fetch` eintragen.)
+   Instanz neu starten.
+
+   Zur Node-Version: Das Script selbst braucht **Node.js ≥ 18** (liefert
+   globales `fetch()`; bei älterem Node zusätzlich `node-fetch` eintragen).
+   Das aktuelle `cheerio` (1.x) setzt allerdings **Node.js ≥ 20.18.1** voraus
+   — es lädt `undici`, das den erst ab Node 20 globalen `File`-Konstruktor
+   benötigt, sonst scheitert schon das Laden mit `File is not defined`. In der
+   Praxis also **Node 20 oder neuer**. Wer auf Node 18 festsitzt, trägt
+   stattdessen `cheerio@1.0.0-rc.12` ein — damit läuft das Script unverändert,
+   die verwendeten cheerio-Funktionen sind in beiden Versionslinien gleich.
 2. **Pushover-Adapter** installieren/einrichten (Instanz z.B. `pushover.0`),
    falls noch nicht vorhanden.
 3. Neues **JavaScript-Script** (Typ „Javascript/js“) in der ioBroker-Scripts-Oberfläche
@@ -137,11 +145,12 @@ bei jedem Push und Pull Request:
   HTTP-Server, der den per HAR-Mitschnitt verifizierten Login-Ablauf nachbildet;
   es wird bewusst keine Verbindung zum echten Hochschulportal aufgebaut und es
   sind keine Zugangsdaten nötig.
-- **ioBroker-Script** — die Testsuite aus `iobroker/test/` auf Node.js 18, 20
-  und 22 (`npm test`, Node-eigener Test-Runner). Die Globals der Adapter-Sandbox
+- **ioBroker-Script** — die Testsuite aus `iobroker/test/` auf Node.js 20, 22
+  und 24 (`npm test`, Node-eigener Test-Runner). Die Globals der Adapter-Sandbox
   (`log`, `schedule`, `sendTo`, `createStateAsync`, ...) werden gestubbt und das
   Script gegen denselben nachgebildeten Login-Ablauf laufen gelassen. Dazu
-  `node --check` als Syntax-Prüfung.
+  `node --check` als Syntax-Prüfung. Node 18 ist nicht dabei, weil das aktuelle
+  `cheerio` dort nicht lädt (siehe Hinweis zur Node-Version oben).
 
 Lokal ausführen:
 

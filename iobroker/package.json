@@ -6,6 +6,9 @@
   "scripts": {
     "test": "node --test"
   },
+  "engines": {
+    "node": ">=20.18.1"
+  },
   "devDependencies": {
     "cheerio": "^1.0.0"
   }
