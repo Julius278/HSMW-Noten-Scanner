@@ -130,3 +130,22 @@ node --check iobroker/hsmw-noten-scanner.js
 Das Script enthält dein Passwort im Klartext im `CONFIG`-Block. Zugriff auf
 die ioBroker-Scripts-Oberfläche entsprechend einschränken und das Script
 nicht ungeschützt weitergeben/veröffentlichen.
+
+In der Python-Variante lassen sich die Zugangsdaten stattdessen über
+Umgebungsvariablen setzen (`HSMW_USERNAME`/`HSMW_PASSWORD`), sodass sie nicht
+in einer Datei liegen müssen. `config.toml` und `state.json` sind per
+`.gitignore` ausgenommen.
+
+## Entstehung des Codes
+
+Große Teile dieses Repositories sind mit **Claude Code** generiert — in der
+Commit-Historie ist das ohnehin nachvollziehbar. Der Ablauf war iterativ: das
+Grundgerüst wurde generiert und anschließend anhand echter HTML-Exporte und
+eines HAR-Mitschnitts des Login-Vorgangs korrigiert, bis der Shibboleth-Flow
+(inkl. Client-Storage-Zwischenseite und SPNEGO-Sackgasse) und die
+Tabellenauswertung wirklich passten.
+
+Das ioBroker-Script läuft im echten Betrieb, die Python-Variante ist gegen den
+nachgebildeten Ablauf getestet, aber nicht über Wochen erprobt. Wer das
+übernimmt, sollte den Code entsprechend selbst prüfen — insbesondere die
+Selektoren, die sich mit jeder Änderung am Portal verschieben können.
