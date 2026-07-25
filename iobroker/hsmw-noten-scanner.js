@@ -9,13 +9,21 @@
 //     "node-fetch" unter "Zusätzliche NPM-Module" eintragen.
 //   - Zusätzliches NPM-Modul "cheerio" eintragen (zum HTML-Parsen).
 //
-// Da das Portal nur mit gültigen Zugangsdaten erreichbar ist, konnten Login-
-// Formular und Notenspiegel-Knopf nicht live geprüft werden. Die Erkennung
-// ist deshalb bewusst generisch gehalten (erstes Passwortfeld = Login-
-// Formular, erstes Textfeld darin = Benutzername, Link/Button-Text
-// konfigurierbar). Schlägt ein Schritt fehl, wird eine Fehlermeldung geloggt;
-// über CONFIG.debugDir kann zusätzlich ein HTML-Snapshot auf die Platte
-// geschrieben werden, um die Selektoren unten anzupassen.
+// Ablauf (basierend auf echten HTML-Exporten der Login- und Notenanzeige-
+// Seite): Login läuft über den zentralen Shibboleth-SSO (SAML2 POST-Binding,
+// separater IdP-Host). Man landet danach direkt auf der Notenanzeige-Seite,
+// auf der einmalig eine Rechtsbehelfsbelehrung bestätigt werden muss
+// (Formular mit verstecktem Feld "confirm_marks"). Die vollständige Liste
+// aller Module (inkl. noch nicht bewerteter) zeigt erst die Ansicht
+// "Alle Fächer anzeigen" (?view=full).
+//
+// Die eigentliche Notentabelle (Spaltenaufbau, genaue Darstellung von noch
+// nicht eingetragenen Noten) konnte noch nicht eingesehen werden - die
+// Tabellen-Erkennung in parseGradesTable()/findTargetGrade() ist deshalb
+// bewusst generisch gehalten. Schlägt ein Schritt fehl, wird eine
+// Fehlermeldung geloggt; über CONFIG.debugDir kann zusätzlich ein
+// HTML-Snapshot auf die Platte geschrieben werden, um die Selektoren unten
+// anzupassen.
 
 const cheerio = require('cheerio');
 const fs = require('fs');
@@ -35,10 +43,6 @@ const CONFIG = {
     // Name/Teilstring des Moduls bzw. der Prüfung, dessen Note überwacht
     // werden soll (Groß-/Kleinschreibung wird ignoriert)
     targetModule: 'Analysis 1',
-
-    // Text des Knopfes/Links zur Notenübersicht. Mehrere Kandidaten möglich,
-    // der erste gefundene Treffer wird verwendet.
-    buttonCandidates: ['Notenspiegel', 'Leistungsspiegel', 'Prüfungsergebnisse', 'Notenübersicht'],
 
     // Pushover-Adapterinstanz und optionaler Sound
     pushoverInstance: 'pushover.0',
@@ -299,39 +303,44 @@ async function login(jar) {
 // Notenübersicht öffnen
 // ---------------------------------------------------------------------------
 
+// Direkt nach dem Login landet man bereits auf der Notenanzeige-Seite. Zwei
+// Besonderheiten dieser konkreten Seite (laut echtem HTML-Export):
+//   1. Die Standardansicht zeigt vermutlich nicht alle Module (nur bereits
+//      benotete). Der Link "Alle Fächer anzeigen" (?view=full) zeigt die
+//      vollständige Liste inkl. noch nicht bewerteter Module - das ist die
+//      für uns relevante Ansicht.
+//   2. Vor der eigentlichen Notenliste muss einmalig eine
+//      Rechtsbehelfsbelehrung bestätigt werden: ein <form> ohne action mit
+//      einem versteckten Feld "confirm_marks=true", das an die aktuelle
+//      Seite zurückgesendet wird.
 async function openGradesView(jar, page) {
     const $ = cheerio.load(page.body);
 
-    for (const text of CONFIG.buttonCandidates) {
-        const lower = text.toLowerCase();
-
-        const link = $('a')
-            .filter((i, el) => $(el).text().trim().toLowerCase().includes(lower) && $(el).attr('href'))
-            .first();
-        if (link.length > 0) {
-            const url = new URL(link.attr('href'), page.url).toString();
-            log(`Öffne Link "${text}"`);
-            return fetchWithCookies(url, { method: 'GET' }, jar);
-        }
-
-        const btn = $('input[type=submit], button')
-            .filter((i, el) => {
-                const val = ($(el).attr('value') || $(el).text() || '').trim().toLowerCase();
-                return val.includes(lower);
-            })
-            .first();
-        if (btn.length > 0) {
-            const form = btn.closest('form');
-            if (form.length === 0) continue;
-            log(`Sende Formular für Knopf "${text}"`);
-            return submitForm($, form, page.url, jar, {});
-        }
+    let fullViewUrl;
+    const fullViewLink = $('a')
+        .filter((i, el) => /view=full/i.test($(el).attr('href') || ''))
+        .first();
+    if (fullViewLink.length > 0) {
+        fullViewUrl = new URL(fullViewLink.attr('href'), page.url).toString();
+    } else {
+        const u = new URL(page.url);
+        u.searchParams.set('view', 'full');
+        fullViewUrl = u.toString();
     }
 
-    dumpDebug('grades-button-not-found', page.body);
-    throw new Error(
-        `Keiner der konfigurierten Knöpfe [${CONFIG.buttonCandidates.join(', ')}] wurde gefunden. Siehe debugDir-Snapshot.`,
-    );
+    log('Öffne vollständige Notenübersicht (alle Fächer)...');
+    let current = await fetchWithCookies(fullViewUrl, { method: 'GET' }, jar);
+
+    let $$ = cheerio.load(current.body);
+    const confirmForm = $$('form')
+        .filter((i, el) => $$(el).find('input[name=confirm_marks]').length > 0)
+        .first();
+    if (confirmForm.length > 0) {
+        log('Bestätige Rechtsbehelfsbelehrung...');
+        current = await submitForm($$, confirmForm, current.url, jar, {});
+    }
+
+    return current;
 }
 
 // ---------------------------------------------------------------------------
@@ -360,10 +369,14 @@ function findTargetGrade(rows, targetModule) {
     const targetLower = targetModule.toLowerCase();
     for (const cells of rows) {
         if (cells.some((c) => c.toLowerCase().includes(targetLower))) {
+            // Note ist meist die letzte nicht-leere Zelle, die nicht der
+            // Modulname selbst ist. Grenze bewusst nicht zu eng (numerische
+            // Noten wie "2,3" ebenso wie Textnoten wie "bestanden" /
+            // "nicht bestanden" sollen erfasst werden).
             let grade = null;
             for (let i = cells.length - 1; i >= 0; i--) {
                 const c = cells[i].trim();
-                if (c && c.toLowerCase() !== targetLower && c.length <= 6) {
+                if (c && c.toLowerCase() !== targetLower && c.length <= 30) {
                     grade = c;
                     break;
                 }
@@ -396,7 +409,10 @@ async function ensureStates() {
     await createStateAsync(STATE_PREFIX + 'lastCheck', '');
 }
 
-const UNGRADED_VALUES = ['-', '--', 'n.b.', 'offen'];
+// Werte, die als "noch keine Note eingetragen" gewertet werden. Da die echte
+// Notentabelle noch nicht eingesehen werden konnte, ist diese Liste eine
+// Vermutung - bei Bedarf anhand von CONFIG.debugDir-Snapshots anpassen.
+const UNGRADED_VALUES = ['-', '--', 'n.b.', 'offen', 'noch nicht bewertet', 'nicht bewertet', 'ausstehend'];
 
 async function checkGrades() {
     const jar = {};

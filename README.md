@@ -8,10 +8,13 @@ eingetragenen Note wird per Pushover-Adapter benachrichtigt.
 Ablauf:
 
 1. Öffnet `https://qispos.hs-mittweida.de/noten?intranet&m`
-2. Loggt sich mit Benutzername/Kennwort ein (klassisches Formular + Session-Cookie)
-3. Folgt dem Link/Knopf zur Notenübersicht (z.B. "Notenspiegel")
-4. Sucht die Zeile des konfigurierten Moduls in der Ergebnistabelle
-5. Meldet per `log()` und speichert den Stand in ioBroker-States; bei einer
+2. Loggt sich per Shibboleth-SSO (SAML2) mit Benutzername/Kennwort ein
+3. Landet auf der Notenanzeige-Seite und öffnet die Ansicht "Alle Fächer
+   anzeigen" (`?view=full`), die auch noch nicht bewertete Module zeigt
+4. Bestätigt bei Bedarf einmalig die Rechtsbehelfsbelehrung (Formular
+   `confirm_marks`)
+5. Sucht die Zeile des konfigurierten Moduls in der Ergebnistabelle
+6. Meldet per `log()` und speichert den Stand in ioBroker-States; bei einer
    **neuen** Note wird zusätzlich eine Pushover-Nachricht verschickt
 
 Das Script nutzt bewusst keinen Headless-Browser (kein Playwright/Puppeteer),
@@ -30,11 +33,11 @@ Mittweida (separater IdP-Host, SAML2-POST-Binding). Das Script:
   (verstecktes Formular mit `SAMLResponse`/`RelayState`), die sich im echten
   Browser per JavaScript selbst zurück zum QIS/POS-Portal postet.
 
-Button-Erkennung für die Notenübersicht selbst ist weiterhin generisch
-gehalten (Linktext konfigurierbar über `buttonCandidates`), da der Aufbau der
-Notenseite nach dem Login nicht eingesehen werden konnte. Schlägt ein Schritt
-fehl, wird das im ioBroker-Log gemeldet; über `CONFIG.debugDir` kann
-zusätzlich ein HTML-Snapshot der zuletzt geladenen Seite auf die Platte
+Die Tabellen-Erkennung der eigentlichen Notenliste (`parseGradesTable`/
+`findTargetGrade`) ist bewusst generisch gehalten, da der exakte
+Spaltenaufbau der Notentabelle noch nicht eingesehen werden konnte. Schlägt
+ein Schritt fehl, wird das im ioBroker-Log gemeldet; über `CONFIG.debugDir`
+kann zusätzlich ein HTML-Snapshot der zuletzt geladenen Seite auf die Platte
 geschrieben werden, um die Selektoren in `iobroker/hsmw-noten-scanner.js` bei
 Bedarf anzupassen.
 
@@ -52,7 +55,6 @@ Bedarf anzupassen.
 4. Im `CONFIG`-Block am Anfang des Scripts anpassen:
    - `username` / `password` — deine QIS-Zugangsdaten
    - `targetModule` — Name/Teilstring des zu überwachenden Moduls, z.B. `Analysis 1`
-   - `buttonCandidates` — Text des Knopfes zur Notenübersicht (mehrere Kandidaten möglich)
    - `pushoverInstance` / `pushoverSound` — z.B. `pushover.0`
    - `cronSchedule` — wie oft geprüft werden soll, Standard alle 30 Minuten
 5. Script aktivieren/starten.
