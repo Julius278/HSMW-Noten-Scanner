@@ -43,8 +43,14 @@ jobs:
         run: python -m unittest discover -s python -v
 
   javascript:
-    name: ioBroker-Script prüfen
+    name: ioBroker-Script (Node.js ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 ist die Mindestversion (globales fetch()); 20/22 spiegeln
+        # aktuellere ioBroker-Installationen.
+        node-version: ["18", "20", "22"]
 
     steps:
       - uses: actions/checkout@v4
@@ -52,10 +58,21 @@ jobs:
       - name: Node.js einrichten
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: iobroker/package-lock.json
+
+      - name: Abhängigkeiten installieren
+        run: npm ci
+        working-directory: iobroker
 
       - name: Syntax prüfen
-        # Für das ioBroker-Script gibt es keine Testsuite (es läuft nur in der
-        # Adapter-Sandbox mit deren Globals). Der Syntax-Check verhindert
-        # zumindest, dass ein Tippfehler unbemerkt ins Repository kommt.
-        run: node --check iobroker/hsmw-noten-scanner.js
+        run: node --check hsmw-noten-scanner.js
+        working-directory: iobroker
+
+      - name: Tests ausführen
+        # Die Tests stubben die ioBroker-Globals und starten einen lokalen
+        # HTTP-Server, der den Login-Ablauf nachbildet - auch hier ohne
+        # Verbindung zum echten Hochschulportal.
+        run: npm test
+        working-directory: iobroker
