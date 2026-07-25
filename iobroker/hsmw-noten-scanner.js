@@ -46,7 +46,7 @@ const CONFIG = {
 
     // Name/Teilstring des Moduls bzw. der Prüfung, dessen Note überwacht
     // werden soll (Groß-/Kleinschreibung wird ignoriert)
-    targetModule: 'Analysis 1',
+    targetModule: 'dein_modulname',
 
     // Pushover-Adapterinstanz und optionaler Sound
     pushoverInstance: 'pushover.0',

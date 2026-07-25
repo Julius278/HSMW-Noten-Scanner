@@ -1,2 +1,13 @@
 node_modules/
 debug/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Lokale Konfiguration mit Zugangsdaten und gespeicherter Notenstand
+python/config.toml
+python/state.json
+python/*.log

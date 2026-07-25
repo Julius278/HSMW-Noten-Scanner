@@ -1,0 +1,38 @@
+# Beispielkonfiguration für den HSMW Noten-Scanner (Python-Variante).
+#
+# Kopieren nach "config.toml" und anpassen:
+#     cp config.example.toml config.toml
+#
+# config.toml ist per .gitignore ausgenommen, damit die Zugangsdaten nicht
+# versehentlich im Repository landen. Alternativ (oder ergänzend) lassen sich
+# alle Werte über Umgebungsvariablen setzen, die Vorrang haben:
+#     HSMW_USERNAME, HSMW_PASSWORD, HSMW_URL, HSMW_TARGET_MODULES,
+#     HSMW_INTERVAL_MINUTES, HSMW_STATE_FILE, HSMW_DEBUG_DIR
+
+# QIS-Zugangsdaten (ohne "@hs-mittweida.de")
+username = "dein_benutzername"
+password = "dein_kennwort"
+
+# Startseite des Notenportals (Login-Redirect erfolgt automatisch)
+url = "https://qispos.hs-mittweida.de/noten?intranet&m"
+
+# Module, deren Note überwacht werden soll. Gesucht wird in der Spalte "Fach",
+# also der volle bzw. eindeutige Modulname ("Beispielmodul 1"), nicht die kurze
+# Modul-Kennung aus der Spalte "Modul" (z.B. "1234(M)").
+# Groß-/Kleinschreibung wird ignoriert.
+target_modules = ["dein_modulname"]
+
+# Intervall für den Dauerbetrieb (--loop) in Minuten
+interval_minutes = 15
+
+# Timeout einzelner HTTP-Requests in Sekunden
+request_timeout_s = 20
+
+# Datei, in der der letzte Notenstand gespeichert wird (relativ zu dieser
+# Konfigurationsdatei). Nötig, damit eine Benachrichtigung nur beim Übergang
+# "nicht eingetragen" -> "eingetragen" ausgelöst wird.
+state_file = "state.json"
+
+# Optional: Verzeichnis für HTML-Snapshots bei Fehlern (zum Debuggen der
+# Selektoren). Zeile auskommentiert lassen, um das zu deaktivieren.
+# debug_dir = "debug"
