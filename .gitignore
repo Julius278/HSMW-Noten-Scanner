@@ -1,9 +1,2 @@
-.env
-scraper.log
-cron.log
-__pycache__/
-*.pyc
-.venv/
-venv/
-data/status.json
+node_modules/
 debug/

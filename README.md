@@ -1,87 +1,73 @@
-# HSMW Noten-Scanner
+# HSMW Noten-Scanner (ioBroker)
 
-Ein Web-Scraper, der sich in das QIS/POS-Notenportal der Hochschule Mittweida
-einloggt, die Notenübersicht öffnet und prüft, ob für ein bestimmtes Modul
-bereits eine Note eingetragen ist.
+Ein ioBroker-Script (javascript-Adapter), das sich in das QIS/POS-Notenportal
+der Hochschule Mittweida einloggt, die Notenübersicht öffnet und prüft, ob
+für ein bestimmtes Modul bereits eine Note eingetragen ist. Bei einer neu
+eingetragenen Note wird per Pushover-Adapter benachrichtigt.
 
 Ablauf:
 
 1. Öffnet `https://qispos.hs-mittweida.de/noten?intranet&m`
-2. Loggt sich mit Benutzername/Kennwort ein
-3. Klickt auf den Knopf zur Notenübersicht (z.B. "Notenspiegel")
+2. Loggt sich mit Benutzername/Kennwort ein (klassisches Formular + Session-Cookie)
+3. Folgt dem Link/Knopf zur Notenübersicht (z.B. "Notenspiegel")
 4. Sucht die Zeile des konfigurierten Moduls in der Ergebnistabelle
-5. Meldet, ob das Notenfeld leer oder bereits befüllt ist
+5. Meldet per `log()` und speichert den Stand in ioBroker-States; bei einer
+   **neuen** Note wird zusätzlich eine Pushover-Nachricht verschickt
 
-Der Login-Formular- und Button-Erkennung sind bewusst tolerant/generisch
-gehalten (mehrere Fallback-Selektoren), da die genaue Portal-Struktur ohne
-gültige Zugangsdaten nicht live geprüft werden konnte. Falls ein Schritt
-fehlschlägt, wird automatisch ein Screenshot + HTML-Snapshot in `debug/`
-abgelegt, mit dessen Hilfe sich die Selektoren in `scraper.py` leicht
-anpassen lassen.
+Das Script nutzt bewusst keinen Headless-Browser (kein Playwright/Puppeteer),
+sondern einfache HTTP-Requests (`fetch`) + HTML-Parsing (`cheerio`) mit
+manueller Cookie-Verwaltung — das ist deutlich leichtgewichtiger und läuft
+problemlos auch auf einem Raspberry Pi.
 
-## Setup
+Login-Formular- und Button-Erkennung sind generisch gehalten (erstes
+Passwortfeld im ersten `<form>` mit Passwortfeld = Login-Formular, erstes
+Textfeld darin = Benutzername), da die genaue Portal-Struktur ohne gültige
+Zugangsdaten nicht live geprüft werden konnte. Schlägt ein Schritt fehl, wird
+das im ioBroker-Log gemeldet; über `CONFIG.debugDir` kann zusätzlich ein
+HTML-Snapshot der zuletzt geladenen Seite auf die Platte geschrieben werden,
+um die Selektoren in `iobroker/hsmw-noten-scanner.js` bei Bedarf anzupassen.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium
-```
+## Setup in ioBroker
 
-Konfiguration anlegen:
+1. **Adapter-Instanz vorbereiten:** In den Einstellungen der `javascript`-Adapter-Instanz
+   unter "Zusätzliche NPM-Module" das Modul **`cheerio`** eintragen und die
+   Instanz neu starten. (Node.js ≥ 18 wird vorausgesetzt, liefert dann
+   globales `fetch()`. Bei älterem Node zusätzlich `node-fetch` eintragen.)
+2. **Pushover-Adapter** installieren/einrichten (Instanz z.B. `pushover.0`),
+   falls noch nicht vorhanden.
+3. Neues **JavaScript-Script** (Typ „Javascript/js“) in der ioBroker-Scripts-Oberfläche
+   anlegen und den Inhalt von [`iobroker/hsmw-noten-scanner.js`](iobroker/hsmw-noten-scanner.js)
+   hineinkopieren.
+4. Im `CONFIG`-Block am Anfang des Scripts anpassen:
+   - `username` / `password` — deine QIS-Zugangsdaten
+   - `targetModule` — Name/Teilstring des zu überwachenden Moduls, z.B. `Analysis 1`
+   - `buttonCandidates` — Text des Knopfes zur Notenübersicht (mehrere Kandidaten möglich)
+   - `pushoverInstance` / `pushoverSound` — z.B. `pushover.0`
+   - `cronSchedule` — wie oft geprüft werden soll, Standard alle 30 Minuten
+5. Script aktivieren/starten.
 
-```bash
-cp .env.example .env
-```
-
-Dann in `.env` eintragen:
-
-- `QIS_USERNAME` / `QIS_PASSWORD` — deine Zugangsdaten
-- `TARGET_MODULE` — Name/Teilstring des zu überwachenden Moduls, z.B. `Analysis 1`
-- `GRADES_BUTTON_TEXT` — Text des Knopfes zur Notenübersicht (mehrere Kandidaten
-  mit `|` trennen), Standard: `Notenspiegel|Leistungsspiegel|Prüfungsergebnisse|Notenübersicht`
-- optional `SMTP_*` — falls eine E-Mail-Benachrichtigung gewünscht ist, sobald
-  die Note eingetragen wurde. Ohne diese Angaben wird nur auf Konsole/Logfile
-  ausgegeben.
-
-Die `.env` wird nicht ins Git-Repo übernommen (`.gitignore`).
-
-## Ausführen
-
-```bash
-python3 scraper.py
-```
-
-Optionen:
-
-- `--target-module "Analysis 1"` — Modul für diesen Lauf überschreiben
-- `--headed` — Browser sichtbar starten (zum Debuggen der Selektoren)
-
-Exit-Codes: `0` = erfolgreich geprüft, `1` = Modul nicht gefunden,
-`2` = Fehler (z.B. Login fehlgeschlagen, siehe `scraper.log` und `debug/`).
-
-Ergebnis wird zusätzlich in `data/status.json` gespeichert (letzter geprüfter
-Stand), damit bei wiederholten Läufen (z.B. per Cron) nur bei einer **neuen**
-Note eine Benachrichtigung ausgelöst wird.
-
-## Automatischer Lauf per Cron
-
-Beispiel: alle 30 Minuten prüfen (crontab -e):
-
-```
-*/30 * * * * cd /pfad/zu/HSMW-Noten-Scanner && /pfad/zu/.venv/bin/python scraper.py >> cron.log 2>&1
-```
+Der aktuelle Stand wird unter `0_userdata.0.hsmwNotenScanner.*` als States
+abgelegt (`lastGrade`, `lastGraded`, `lastCheck`) — darüber lässt sich der
+Status auch in VIS o.ä. anzeigen. Eine Pushover-Benachrichtigung wird nur
+beim Übergang von "nicht eingetragen" zu "eingetragen" verschickt, nicht bei
+jedem Lauf erneut.
 
 ## Anpassung bei Problemen
 
-Falls das Login-Formular oder der Notenspiegel-Knopf nicht erkannt werden:
+Falls Login-Formular, Notenspiegel-Knopf oder Tabellen-Layout nicht erkannt
+werden:
 
-1. Lauf mit `--headed` starten und den Ablauf im Browser beobachten
-2. Snapshots in `debug/` ansehen (Screenshot + HTML der Seite im Fehlerfall)
-3. Selektoren in `scraper.py` (Funktionen `login`, `open_grades_view`,
-   `parse_grades_table`) entsprechend der tatsächlichen Seitenstruktur anpassen
+1. `CONFIG.debugDir` auf einen beschreibbaren Pfad setzen (z.B.
+   `/opt/iobroker/hsmw-noten-scanner-debug`) — bei Fehlern wird dort ein
+   HTML-Snapshot der zuletzt geladenen Seite abgelegt.
+2. Snapshot ansehen und die Selektoren in `iobroker/hsmw-noten-scanner.js`
+   (Funktionen `login`, `openGradesView`, `parseGradesTable`) entsprechend
+   der tatsächlichen Seitenstruktur anpassen.
+3. Im ioBroker-Log (`log()`-Ausgaben) nachvollziehen, an welchem Schritt es
+   scheitert.
 
 ## Sicherheitshinweis
 
-Die `.env`-Datei enthält dein Passwort im Klartext lokal auf deinem Rechner —
-nicht committen, nicht weitergeben, Zugriffsrechte entsprechend einschränken.
+Das Script enthält dein Passwort im Klartext im `CONFIG`-Block. Zugriff auf
+die ioBroker-Scripts-Oberfläche entsprechend einschränken und das Script
+nicht ungeschützt weitergeben/veröffentlichen.
