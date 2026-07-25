@@ -143,6 +143,9 @@ Notentabelle) und prüfen zusätzlich die Spaltenauswertung sowie dass die
 Benachrichtigung nur beim Statuswechsel ausgelöst wird. Es wird nichts nach
 außen verbunden.
 
+Dieselbe Suite läuft in GitHub Actions auf Python 3.11, 3.12 und 3.13, siehe
+[`.github/workflows/tests.yml`](../.github/workflows/tests.yml).
+
 ## Fehlersuche
 
 `debug_dir` in `config.toml` (bzw. `HSMW_DEBUG_DIR`) setzen — bei

@@ -1,5 +1,7 @@
 # HSMW Noten-Scanner
 
+[![Tests](https://github.com/Julius278/HSMW-Noten-Scanner/actions/workflows/tests.yml/badge.svg)](https://github.com/Julius278/HSMW-Noten-Scanner/actions/workflows/tests.yml)
+
 Loggt sich in das QIS/POS-Notenportal der Hochschule Mittweida ein, öffnet die
 Notenübersicht und prüft, ob für ein bestimmtes Modul bereits eine Note
 eingetragen ist. Es gibt zwei Umsetzungen mit identischem Ablauf:
@@ -99,6 +101,29 @@ werden:
    der tatsächlichen Seitenstruktur anpassen.
 3. Im ioBroker-Log (`log()`-Ausgaben) nachvollziehen, an welchem Schritt es
    scheitert.
+
+## Tests / CI
+
+Der Workflow [`.github/workflows/tests.yml`](.github/workflows/tests.yml) läuft
+bei jedem Push und Pull Request:
+
+- **Python** — die Testsuite aus `python/` auf Python 3.11, 3.12 und 3.13
+  (`python -m unittest discover -s python`). Die Tests starten einen lokalen
+  HTTP-Server, der den per HAR-Mitschnitt verifizierten Login-Ablauf nachbildet;
+  es wird bewusst keine Verbindung zum echten Hochschulportal aufgebaut und es
+  sind keine Zugangsdaten nötig.
+- **ioBroker-Script** — `node --check` auf `iobroker/hsmw-noten-scanner.js`.
+  Eine echte Testsuite gibt es dafür nicht, da das Script die Globals der
+  Adapter-Sandbox (`log`, `schedule`, `sendTo`, ...) erwartet; der Syntax-Check
+  fängt aber Tippfehler ab.
+
+Lokal ausführen:
+
+```bash
+pip install -r python/requirements.txt
+python -m unittest discover -s python -v
+node --check iobroker/hsmw-noten-scanner.js
+```
 
 ## Sicherheitshinweis
 
