@@ -54,7 +54,7 @@ const CONFIG = {
 
     // Wie oft geprüft werden soll (Cron-Ausdruck für die schedule()-Funktion
     // des javascript-Adapters)
-    cronSchedule: '*/30 * * * *',
+    cronSchedule: '*/15 * * * *',
 
     // Beim Start des Scripts direkt einmal prüfen (zusätzlich zum Zeitplan)
     runOnScriptStart: true,

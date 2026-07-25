@@ -68,7 +68,7 @@ Seite auf die Platte geschrieben werden, um die Selektoren in
    - `username` / `password` — deine QIS-Zugangsdaten
    - `targetModule` — Name/Teilstring des zu überwachenden Moduls, z.B. `Analysis 1`
    - `pushoverInstance` / `pushoverSound` — z.B. `pushover.0`
-   - `cronSchedule` — wie oft geprüft werden soll, Standard alle 30 Minuten
+   - `cronSchedule` — wie oft geprüft werden soll, Standard alle 15 Minuten
 5. Script aktivieren/starten.
 
 Der aktuelle Stand wird unter `0_userdata.0.hsmwNotenScanner.*` als States
