@@ -58,18 +58,91 @@ GRADES_LANDING_PAGE = """<html><body>
 <a href="/?view=full">Alle F&auml;cher anzeigen</a>
 </body></html>"""
 
-CONFIRM_PAGE = """<html><body>
-<p>Rechtsbehelfsbelehrung</p>
+# Vor der Notentabelle steht ein Dropdown zur Auswahl der Seminargruppe. Das
+# Feld heißt im Portal "stgSelect"; die Gruppennamen hier sind frei erfunden
+# (BSP = Beispiel). Vorausgewählt ist die aktuelle Gruppe.
+SEMINAR_GROUPS = [("gr-1", "BSP21w1"), ("gr-2", "BSP22w1"), ("gr-3", "BSP23w1")]
+DEFAULT_GROUP = "gr-2"
+
+# Die Note von "Beispielmodul 1" hängt von der Gruppe ab. Damit prüfen die Tests
+# nicht bloß, dass ein Parameter gesendet wurde, sondern dass die Noten wirklich
+# für die gewählte Gruppe ausgelesen werden.
+GRADE_BY_GROUP = {"gr-1": "3,0", "gr-2": "2,0", "gr-3": "1,0"}
+
+
+def group_select(selected: str) -> str:
+    options = "".join(
+        f'<option value="{value}"{" selected" if value == selected else ""}>{label}</option>'
+        for value, label in SEMINAR_GROUPS
+    )
+    return f'<select name="stgSelect" id="stgSelect">{options}</select>'
+
+
+# Ein Dropdown, das nicht die Seminargruppe ist, aber dieselben Optionstexte
+# anbietet - damit lässt sich prüfen, dass das als Seminargruppe erkennbare Feld
+# ("stgSelect") bevorzugt wird und nicht einfach das erste im Dokument.
+def decoy_select() -> str:
+    options = "".join(
+        f'<option value="decoy-{value}">{label}</option>' for value, label in SEMINAR_GROUPS
+    )
+    return f'<select name="semesterSelect" id="semesterSelect">{options}</select>'
+
+
+def confirm_page(
+    selected: str,
+    *,
+    separate_forms: bool = False,
+    select_in_confirm: bool = False,
+    decoy: bool = False,
+) -> str:
+    """Die Rechtsbehelfsbelehrung, in verschiedenen Formular-Layouts.
+
+    Das echte HTML ist nicht bekannt, daher deckt der Test mehrere Varianten ab:
+
+    * Standard: Dropdown und `confirm_marks` im selben Formular - ein Submit
+      erledigt beides (der wahrscheinliche Fall, das Dropdown steht direkt vor
+      dem Button, der die Tabelle anzeigt).
+    * `separate_forms`: das Dropdown hat sein eigenes Formular, die Bestätigung
+      ein zweites - dann sind zwei Submits nötig.
+    * `select_in_confirm`: das Bestätigungsformular enthält das Dropdown
+      ebenfalls. Wird es dort immer mit der Vorauswahl gerendert, muss die
+      gewählte Gruppe erneut mitgeschickt werden, sonst kippt die Auswahl zurück.
+    """
+    lead = f"<p>Rechtsbehelfsbelehrung</p>{decoy_select() if decoy else ''}"
+    if separate_forms:
+        return f"""<html><body>
+{lead}
+<form method="post" action="/?view=full">
+  {group_select(selected)}
+  <input type="submit" value="Anzeigen" />
+</form>
 <form method="post">
+  {group_select(selected) if select_in_confirm else ''}
   <input type="hidden" name="confirm_marks" value="true" />
   <input type="submit" value="Kenntnis genommen" />
+</form>
+</body></html>"""
+
+    return f"""<html><body>
+{lead}
+<form method="post">
+  {group_select(selected)}
+  <input type="hidden" name="confirm_marks" value="true" />
+  <input type="submit" value="Noten anzeigen" />
 </form>
 </body></html>"""
 
 # Spaltenstruktur wie im echten HTML-Export, mit generischen Beispieldaten:
 # Beispielmodul 1 ist benotet, Beispielmodul 2 ist angemeldet ("AN") mit
 # leerer Note-Zelle.
-GRADES_TABLE_PAGE = """<html><body>
+def grades_table_page(group: str) -> str:
+    # Das Dropdown bleibt neben der Tabelle stehen, sonst wäre nach der
+    # einmaligen Bestätigung kein Wechsel der Gruppe mehr möglich.
+    return f"""<html><body>
+<form method="post" action="/?view=full">
+  {group_select(group)}
+  <input type="submit" value="Anzeigen" />
+</form>
 <table>
   <thead>
     <tr>
@@ -81,7 +154,7 @@ GRADES_TABLE_PAGE = """<html><body>
   <tbody>
     <tr>
       <td>1234</td><td>1</td><td>1</td><td>1234(M)</td><td>5.0</td>
-      <td>PL</td><td>Beispielmodul 1</td><td>2,0</td><td>1</td>
+      <td>PL</td><td>Beispielmodul 1</td><td>{GRADE_BY_GROUP[group]}</td><td>1</td>
       <td>BE</td><td>01.01.2026</td><td></td>
     </tr>
     <tr>
@@ -92,6 +165,10 @@ GRADES_TABLE_PAGE = """<html><body>
   </tbody>
 </table>
 </body></html>"""
+
+
+# Für die reinen Parsing-Tests: Tabelle der Standardgruppe.
+GRADES_TABLE_PAGE = grades_table_page(DEFAULT_GROUP)
 
 
 class PortalHandler(BaseHTTPRequestHandler):
@@ -143,10 +220,7 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._send(LOGIN_PAGE)
         elif path == "/":
             if query == "view=full":
-                if state["confirmed"]:
-                    self._send(GRADES_TABLE_PAGE)
-                else:
-                    self._send(CONFIRM_PAGE)
+                self._send(self.server.grades_or_confirm())
             else:
                 self._send(GRADES_LANDING_PAGE)
         else:
@@ -173,11 +247,15 @@ class PortalHandler(BaseHTTPRequestHandler):
             state["saml_fields"] = fields
             self._redirect("/")
         elif path == "/":
+            if "stgSelect" in fields:
+                group = fields["stgSelect"][0]
+                state["submitted_groups"].append(group)
+                # Unbekannte Gruppe würde das Portal nicht akzeptieren.
+                if any(value == group for value, _ in SEMINAR_GROUPS):
+                    state["current_group"] = group
             if fields.get("confirm_marks") == ["true"]:
                 state["confirmed"] = True
-                self._send(GRADES_TABLE_PAGE)
-            else:
-                self._send(CONFIRM_PAGE)
+            self._send(self.server.grades_or_confirm())
         else:
             self._send("<html><body>not found</body></html>", status=404)
 
@@ -223,7 +301,16 @@ class EndToEndTests(unittest.TestCase):
             "spnego_seen": False,
             "spnego_error_seen": False,
             "confirmed": False,
+            "current_group": DEFAULT_GROUP,
+            "submitted_groups": [],
         }
+        # Nach der Bestätigung liefert das Portal die Tabelle der aktuell
+        # gewählten Gruppe, davor die Rechtsbehelfsbelehrung.
+        self.server.grades_or_confirm = lambda: (
+            grades_table_page(self.server.portal_state["current_group"])
+            if self.server.portal_state["confirmed"]
+            else confirm_page(self.server.portal_state["current_group"])
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -244,14 +331,18 @@ class EndToEndTests(unittest.TestCase):
         self.server.server_close()
         self.tmpdir.cleanup()
 
-    def _config(self, modules: list[str]) -> Config:
+    def _config(self, modules: list[str], seminar_group: str = "") -> Config:
         return Config(
             username=USERNAME,
             password=PASSWORD,
             url=f"{self.base_url}/noten",
             target_modules=modules,
+            seminar_group=seminar_group,
             state_file=self.state_file,
         )
+
+    def _grade_of(self, module: str = "Beispielmodul 1") -> str:
+        return scanner.load_state(self.state_file)["modules"][module]["grade"]
 
     def test_full_flow_bypasses_spnego_and_reads_grade(self):
         cfg = self._config(["Beispielmodul 1"])
@@ -311,6 +402,125 @@ class EndToEndTests(unittest.TestCase):
         cfg = self._config(["Unbekanntes Modul"])
         self.assertEqual(check_grades(cfg), 0)
         self.assertEqual(self.notifications, [])
+
+    # -- Seminargruppe -------------------------------------------------
+
+    # Die Note von "Beispielmodul 1" unterscheidet sich je Gruppe (siehe
+    # GRADE_BY_GROUP). Darüber prüfen die Tests, dass wirklich die Noten der
+    # gewählten Gruppe gelesen werden - nicht nur, dass ein Parameter mitging.
+
+    def test_without_config_preselected_group_is_kept(self):
+        cfg = self._config(["Beispielmodul 1"])
+        self.assertEqual(check_grades(cfg), 0)
+
+        state = self.server.portal_state
+        self.assertEqual(state["current_group"], DEFAULT_GROUP, "Gruppe darf nicht gewechselt werden")
+        self.assertEqual(set(state["submitted_groups"]), {DEFAULT_GROUP})
+        self.assertEqual(self._grade_of(), GRADE_BY_GROUP[DEFAULT_GROUP])
+
+    def test_default_behaves_like_empty(self):
+        cfg = self._config(["Beispielmodul 1"], seminar_group="Default")
+        self.assertEqual(check_grades(cfg), 0)
+        self.assertEqual(self.server.portal_state["current_group"], DEFAULT_GROUP)
+        self.assertEqual(self._grade_of(), GRADE_BY_GROUP[DEFAULT_GROUP])
+
+    def test_group_selected_by_visible_label(self):
+        cfg = self._config(["Beispielmodul 1"], seminar_group="BSP21w1")
+        self.assertEqual(check_grades(cfg), 0)
+
+        self.assertEqual(self.server.portal_state["current_group"], "gr-1")
+        self.assertIn("gr-1", self.server.portal_state["submitted_groups"])
+        self.assertEqual(self._grade_of(), GRADE_BY_GROUP["gr-1"], "Noten der falschen Gruppe gelesen")
+
+    def test_group_selected_by_option_value(self):
+        cfg = self._config(["Beispielmodul 1"], seminar_group="gr-3")
+        self.assertEqual(check_grades(cfg), 0)
+        self.assertEqual(self.server.portal_state["current_group"], "gr-3")
+        self.assertEqual(self._grade_of(), GRADE_BY_GROUP["gr-3"])
+
+    def test_group_matches_case_insensitively_and_as_substring(self):
+        cfg = self._config(["Beispielmodul 1"], seminar_group="bsp23")
+        self.assertEqual(check_grades(cfg), 0)
+        self.assertEqual(self.server.portal_state["current_group"], "gr-3")
+        self.assertEqual(self._grade_of(), GRADE_BY_GROUP["gr-3"])
+
+    def test_unknown_group_aborts_and_lists_available(self):
+        # Lieber ein klarer Fehler als stillschweigend die Noten der falschen
+        # Gruppe zu melden.
+        cfg = self._config(["Beispielmodul 1"], seminar_group="BSP99w9")
+        with self.assertLogs(scanner.LOG, level="ERROR") as captured:
+            logging.disable(logging.NOTSET)
+            self.assertEqual(check_grades(cfg), 1)
+        message = "\n".join(captured.output)
+
+        self.assertIn("BSP99w9", message)
+        self.assertIn("steht nicht zur Auswahl", message)
+        for _, label in SEMINAR_GROUPS:
+            self.assertIn(label, message, f"verfügbare Gruppe {label} fehlt in der Meldung")
+
+        self.assertEqual(
+            self.server.portal_state["current_group"],
+            DEFAULT_GROUP,
+            "die Gruppe darf nicht gewechselt worden sein",
+        )
+        self.assertEqual(self.notifications, [], "bei unklarer Gruppe darf nichts gemeldet werden")
+
+    def test_group_works_with_separate_form_for_dropdown(self):
+        # Dropdown in eigenem Formular, Bestätigung in einem zweiten: der Ablauf
+        # braucht dann zwei Submits.
+        state = self.server.portal_state
+        self.server.grades_or_confirm = lambda: (
+            grades_table_page(state["current_group"])
+            if state["confirmed"]
+            else confirm_page(state["current_group"], separate_forms=True)
+        )
+
+        cfg = self._config(["Beispielmodul 1"], seminar_group="BSP21w1")
+        self.assertEqual(check_grades(cfg), 0)
+        self.assertTrue(state["confirmed"], "Rechtsbehelfsbelehrung wurde nicht bestätigt")
+        self.assertEqual(state["current_group"], "gr-1")
+        self.assertEqual(self._grade_of(), GRADE_BY_GROUP["gr-1"])
+
+    def test_group_is_resent_when_confirm_page_forgets_it(self):
+        # Das Portal rendert das Dropdown hier immer mit der Vorauswahl - auch
+        # im Bestätigungsformular. Würde beim Bestätigen nur diese Vorauswahl
+        # mitgehen, käme am Ende die Tabelle der falschen Gruppe.
+        state = self.server.portal_state
+        self.server.grades_or_confirm = lambda: (
+            grades_table_page(state["current_group"])
+            if state["confirmed"]
+            else confirm_page(DEFAULT_GROUP, separate_forms=True, select_in_confirm=True)
+        )
+
+        cfg = self._config(["Beispielmodul 1"], seminar_group="BSP21w1")
+        self.assertEqual(check_grades(cfg), 0)
+        self.assertEqual(
+            set(state["submitted_groups"]),
+            {"gr-1"},
+            f"es darf nur die gewählte Gruppe gesendet werden, gesendet wurde: {state['submitted_groups']}",
+        )
+        self.assertEqual(self._grade_of(), GRADE_BY_GROUP["gr-1"])
+
+    def test_recognisable_group_field_wins_over_other_dropdowns(self):
+        # Auf der Seite steht ein weiteres Dropdown mit denselben Optionstexten,
+        # und zwar vor dem echten. Gewählt werden muss trotzdem das als
+        # Seminargruppe erkennbare Feld ("stgSelect").
+        state = self.server.portal_state
+        self.server.grades_or_confirm = lambda: (
+            grades_table_page(state["current_group"])
+            if state["confirmed"]
+            else confirm_page(state["current_group"], decoy=True)
+        )
+
+        cfg = self._config(["Beispielmodul 1"], seminar_group="BSP21w1")
+        self.assertEqual(check_grades(cfg), 0)
+        self.assertEqual(
+            state["submitted_groups"],
+            ["gr-1"],
+            "es wurde das falsche Dropdown gesetzt",
+        )
+        self.assertEqual(state["current_group"], "gr-1")
+        self.assertEqual(self._grade_of(), GRADE_BY_GROUP["gr-1"])
 
 
 if __name__ == "__main__":

@@ -20,10 +20,12 @@ Ablauf (identisch in beiden Varianten):
 2. Loggt sich per Shibboleth-SSO (SAML2) mit Benutzername/Kennwort ein
 3. Landet auf der Notenanzeige-Seite und öffnet die Ansicht "Alle Fächer
    anzeigen" (`?view=full`), die auch noch nicht bewertete Module zeigt
-4. Bestätigt bei Bedarf einmalig die Rechtsbehelfsbelehrung (Formular
+4. Wählt bei Bedarf die Seminargruppe im Dropdown davor (ohne Konfiguration
+   bleibt die Vorauswahl des Portals unangetastet)
+5. Bestätigt bei Bedarf einmalig die Rechtsbehelfsbelehrung (Formular
    `confirm_marks`)
-5. Sucht die Zeilen der konfigurierten Module in der Ergebnistabelle
-6. Loggt den Stand und speichert ihn (ioBroker-States bzw. `state.json`); nur
+6. Sucht die Zeilen der konfigurierten Module in der Ergebnistabelle
+7. Loggt den Stand und speichert ihn (ioBroker-States bzw. `state.json`); nur
    beim Übergang von "nicht eingetragen" zu "eingetragen" wird zusätzlich
    benachrichtigt
 
@@ -89,6 +91,8 @@ Seite auf die Platte geschrieben werden, um die Selektoren in
    - `targetModules` — Liste der zu überwachenden Module, z.B.
      `['Beispielmodul 1', 'Beispielmodul 2']`. Ein einzelner String ist
      ebenfalls erlaubt (`targetModules: 'Beispielmodul 1'`).
+   - `seminarGroup` — optional, siehe [Seminargruppe](#seminargruppe). Leer
+     lassen für den Normalfall.
    - `pushoverInstance` / `pushoverSound` — z.B. `pushover.0`
    - `cronSchedule` — wie oft geprüft werden soll, Standard alle 15 Minuten
 5. Script aktivieren/starten.
@@ -96,6 +100,31 @@ Seite auf die Platte geschrieben werden, um die Selektoren in
 Alle Module werden in **einem** Durchlauf geprüft: einmal einloggen, einmal die
 Notenübersicht laden, dann jede konfigurierte Modulzeile darin suchen. Pro neu
 eingetragener Note geht genau eine Pushover-Nachricht raus.
+
+### Seminargruppe
+
+Vor der Notentabelle steht im Portal ein Dropdown zur Auswahl der Seminargruppe
+(Feld `stgSelect`); vorausgewählt ist die aktuelle Gruppe. Standardmäßig wird
+diese Vorauswahl einfach übernommen — `seminarGroup` leer lassen oder auf
+`default` setzen.
+
+Relevant ist die Einstellung nur im seltenen Fall, dass die Noten einer
+**anderen** zugewiesenen Gruppe geprüft werden sollen, etwa nach einem
+Gruppenwechsel. Dann den Gruppennamen eintragen:
+
+```js
+seminarGroup: 'BSP21w1',
+```
+
+Gefunden wird die Gruppe über den Anzeigetext **oder** den `option`-Wert des
+Dropdowns, ohne Rücksicht auf Groß-/Kleinschreibung und auch als eindeutiger
+Teilstring. Steht der Wert nicht zur Auswahl, bricht der Lauf mit einer
+Fehlermeldung ab, die die verfügbaren Gruppen aufzählt — lieber ein klarer
+Fehler als stillschweigend die Noten der falschen Gruppe zu melden.
+
+Es ist bewusst nur **eine** Gruppe möglich: mehrere Gruppen gleichzeitig würden
+eine Zuordnung Gruppe → Module brauchen, und dafür ist der Anwendungsfall zu
+klein.
 
 ### States
 

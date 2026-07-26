@@ -48,21 +48,87 @@ const LOGIN_PAGE = `<html><head><title>Anmelden</title></head><body>
 
 const LANDING_PAGE = '<html><body><a href="/?view=full">Alle F&auml;cher anzeigen</a></body></html>';
 
-// Vor der Notenliste steht einmalig die Rechtsbehelfsbelehrung, die per
-// verstecktem Feld confirm_marks bestätigt werden muss.
-const CONFIRM_PAGE = `<html><body>
-<p>Rechtsbehelfsbelehrung</p>
+// Vor der Notentabelle steht ein Dropdown zur Auswahl der Seminargruppe.
+// Vorausgewählt ist die aktuelle Gruppe (hier "gr-2").
+const SEMINAR_GROUPS = [
+    { value: 'gr-1', label: 'BSP21w1' },
+    { value: 'gr-2', label: 'BSP22w1' },
+    { value: 'gr-3', label: 'BSP23w1' },
+];
+const DEFAULT_GROUP = 'gr-2';
+
+// Die Note von "Beispielmodul 1" hängt von der Gruppe ab. Damit prüfen die
+// Tests nicht bloß, dass ein Parameter gesendet wurde, sondern dass die Noten
+// wirklich für die gewählte Gruppe ausgelesen werden.
+const GRADE_BY_GROUP = { 'gr-1': '3,0', 'gr-2': '2,0', 'gr-3': '1,0' };
+
+// Das Feld heißt im Portal "stgSelect"; die Gruppennamen hier sind frei
+// erfunden (BSP = Beispiel).
+function groupSelect(selected) {
+    const options = SEMINAR_GROUPS.map(
+        (g) => `<option value="${g.value}"${g.value === selected ? ' selected' : ''}>${g.label}</option>`,
+    ).join('');
+    return `<select name="stgSelect" id="stgSelect">${options}</select>`;
+}
+
+// Ein Dropdown, das nicht die Seminargruppe ist, aber dieselben Optionstexte
+// anbietet - damit lässt sich prüfen, dass das als Seminargruppe erkennbare Feld
+// ("stgSelect") bevorzugt wird und nicht einfach das erste im Dokument.
+function decoySelect() {
+    const options = SEMINAR_GROUPS.map((g) => `<option value="decoy-${g.value}">${g.label}</option>`).join('');
+    return `<select name="semesterSelect" id="semesterSelect">${options}</select>`;
+}
+
+// Drei Layouts, weil das echte HTML nicht bekannt ist:
+//   "combined"  - Dropdown und confirm_marks stecken im selben Formular, ein
+//                 Submit erledigt beides (der wahrscheinliche Fall: das
+//                 Dropdown steht direkt vor dem Button, der die Tabelle
+//                 anzeigt),
+//   "separate"  - Dropdown hat sein eigenes Formular, die Bestätigung ein
+//                 zweites,
+//   "forgetful" - wie "separate", aber die Bestätigungsseite enthält das
+//                 Dropdown ebenfalls und rendert es immer mit der aktuellen
+//                 Gruppe vorausgewählt, merkt sich die Auswahl also nicht.
+//                 Deckt ab, dass die gewählte Gruppe beim Bestätigen erneut
+//                 mitgeschickt wird und nicht verloren geht.
+function confirmPage(selected, layout, decoy = false) {
+    const lead = `<p>Rechtsbehelfsbelehrung</p>${decoy ? decoySelect() : ''}`;
+    if (layout === 'separate' || layout === 'forgetful') {
+        const confirmSelect = layout === 'forgetful' ? groupSelect(selected) : '';
+        return `<html><body>
+${lead}
+<form method="post" action="/?view=full">
+  ${groupSelect(selected)}
+  <input type="submit" value="Anzeigen" />
+</form>
 <form method="post">
+  ${confirmSelect}
   <input type="hidden" name="confirm_marks" value="true" />
   <input type="submit" value="Kenntnis genommen" />
 </form></body></html>`;
+    }
+    return `<html><body>
+${lead}
+<form method="post">
+  ${groupSelect(selected)}
+  <input type="hidden" name="confirm_marks" value="true" />
+  <input type="submit" value="Noten anzeigen" />
+</form></body></html>`;
+}
 
 // Spaltenstruktur wie im echten HTML-Export, mit generischen Beispieldaten.
 // "Kurs A" und "Kurs-A" werden beim Bereinigen zur gleichen State-ID ("Kurs_A")
 // - damit deckt die Tabelle die Kollisionsbehandlung ab. Beide sind bewusst so
 // benannt, dass keiner ein Teilstring des anderen ist.
-function gradesTablePage(secondGrade) {
-    return `<html><body><table>
+function gradesTablePage(secondGrade, gradeGroup, selectGroup = gradeGroup) {
+    // Das Dropdown bleibt neben der Tabelle stehen, sonst wäre nach der
+    // einmaligen Bestätigung kein Wechsel der Gruppe mehr möglich.
+    return `<html><body>
+<form method="post" action="/?view=full">
+  ${groupSelect(selectGroup)}
+  <input type="submit" value="Anzeigen" />
+</form>
+<table>
   <thead><tr>
     <th>PNr</th><th>Vert</th><th>S</th><th>Modul</th><th>Credits/Wichtung</th>
     <th>Art</th><th>Fach</th><th>Note</th><th>Versuch</th>
@@ -70,7 +136,7 @@ function gradesTablePage(secondGrade) {
   </tr></thead>
   <tbody>
     <tr><td>1234</td><td>1</td><td>1</td><td>1234(M)</td><td>5.0</td>
-        <td>PL</td><td>Beispielmodul 1</td><td>2,0</td><td>1</td>
+        <td>PL</td><td>Beispielmodul 1</td><td>${GRADE_BY_GROUP[gradeGroup]}</td><td>1</td>
         <td>BE</td><td>01.01.2026</td><td></td></tr>
     <tr><td>5678</td><td>1</td><td>2</td><td>5678(M)</td><td>5.0</td>
         <td>PL</td><td>Beispielmodul 2</td><td>${secondGrade}</td><td>1</td>
@@ -88,15 +154,22 @@ function gradesTablePage(secondGrade) {
 </table></body></html>`;
 }
 
-function startPortal() {
+function startPortal({ layout = 'combined', decoy = false } = {}) {
     const seen = {
         spnego: false,
         spnegoError: false,
         confirmed: false,
         clientStorageBody: null,
         loginBody: null,
+        // Welche Gruppen im Laufe des Tests abgeschickt wurden.
+        submittedGroups: [],
     };
     let secondGrade = '';
+    let currentGroup = DEFAULT_GROUP;
+    // Bei Layout "forgetful" merkt sich das Portal die Gruppe nicht: es zählt
+    // nur, was der jeweilige Request mitschickt.
+    const forgetful = layout === 'forgetful';
+    let requestGroup = DEFAULT_GROUP;
 
     const server = http.createServer((req, res) => {
         const [urlPath, query] = req.url.split('?');
@@ -152,17 +225,33 @@ function startPortal() {
             let body = '';
             req.on('data', (c) => (body += c));
             req.on('end', () => {
-                if (body.includes('confirm_marks=true')) {
-                    seen.confirmed = true;
-                    return send(gradesTablePage(secondGrade));
+                const group = new URLSearchParams(body).get('stgSelect');
+                if (group !== null) {
+                    seen.submittedGroups.push(group);
+                    // Unbekannte Gruppe würde das Portal nicht akzeptieren.
+                    if (SEMINAR_GROUPS.some((g) => g.value === group)) {
+                        if (forgetful) requestGroup = group;
+                        else currentGroup = group;
+                    }
                 }
-                send(CONFIRM_PAGE);
+                if (body.includes('confirm_marks=true')) seen.confirmed = true;
+                const selectGroup = forgetful ? DEFAULT_GROUP : currentGroup;
+                const gradeGroup = forgetful ? requestGroup : currentGroup;
+                send(
+                    seen.confirmed
+                        ? gradesTablePage(secondGrade, gradeGroup, selectGroup)
+                        : confirmPage(selectGroup, layout, decoy),
+                );
             });
             return;
         }
 
         if (urlPath === '/' && query === 'view=full') {
-            return send(seen.confirmed ? gradesTablePage(secondGrade) : CONFIRM_PAGE);
+            return send(
+                seen.confirmed
+                    ? gradesTablePage(secondGrade, forgetful ? requestGroup : currentGroup, forgetful ? DEFAULT_GROUP : currentGroup)
+                    : confirmPage(forgetful ? DEFAULT_GROUP : currentGroup, layout, decoy),
+            );
         }
         if (urlPath === '/') return send(LANDING_PAGE);
         return send('<html><body>not found</body></html>', 404);
@@ -173,6 +262,9 @@ function startPortal() {
         seen,
         setSecondGrade: (value) => {
             secondGrade = value;
+        },
+        get currentGroup() {
+            return currentGroup;
         },
         listen: () => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)),
         close: () => new Promise((resolve) => server.close(resolve)),
@@ -186,17 +278,28 @@ function startPortal() {
 // Script mit gestubbten ioBroker-Globals laufen lassen
 // ---------------------------------------------------------------------------
 
-function patchScript(source, port, configLine) {
-    const src = source
+function patchScript(source, port, configLine, seminarGroup) {
+    let src = source
         .replace("url: 'https://qispos.hs-mittweida.de/noten?intranet&m'", `url: 'http://127.0.0.1:${port}/noten'`)
         .replace("username: 'dein_benutzername'", `username: '${USERNAME}'`)
         .replace("password: 'dein_kennwort'", `password: '${PASSWORD}'`)
         .replace("targetModules: ['dein_modulname'],", configLine);
 
+    const needed = [`127.0.0.1:${port}`, USERNAME, configLine];
+
+    // Muss über die eigene Zeile laufen: seminarGroup steht in CONFIG hinter
+    // targetModules, ein Anhängen an configLine würde von der originalen Zeile
+    // wieder überschrieben.
+    if (seminarGroup !== undefined) {
+        const line = `seminarGroup: '${seminarGroup}',`;
+        src = src.replace("seminarGroup: '',", line);
+        needed.push(line);
+    }
+
     // Verhindert stille Fehlschläge, falls sich die betroffenen Zeilen im
     // Script ändern und ein replace() nicht mehr greift.
-    for (const needed of [`127.0.0.1:${port}`, USERNAME, configLine]) {
-        assert.ok(src.includes(needed), `Patch griff nicht: ${needed}`);
+    for (const value of needed) {
+        assert.ok(src.includes(value), `Patch griff nicht: ${value}`);
     }
     return src;
 }
@@ -210,7 +313,7 @@ function patchScript(source, port, configLine) {
 // man global.log & Co. setzen, könnte ein noch laufender Durchlauf aus einem
 // früheren Szenario in die Aufzeichnungen des nächsten schreiben - das Script
 // startet beim Laden von selbst und wird hier nicht bis zum Ende abgewartet.
-async function runScanner({ port, configLine, state = {}, until, timeoutMs = 10000, transform }) {
+async function runScanner({ port, configLine, seminarGroup, state = {}, until, timeoutMs = 10000, transform }) {
     const notifications = [];
     const logs = [];
     const progress = { finished: false };
@@ -236,7 +339,7 @@ async function runScanner({ port, configLine, state = {}, until, timeoutMs = 100
         sendTo: (instance, command, message) => notifications.push({ instance, command, ...message }),
     };
 
-    let source = patchScript(fs.readFileSync(SCRIPT_PATH, 'utf-8'), port, configLine);
+    let source = patchScript(fs.readFileSync(SCRIPT_PATH, 'utf-8'), port, configLine, seminarGroup);
     if (transform) source = transform(source);
 
     const names = Object.keys(sandbox);
@@ -478,6 +581,194 @@ test('leere Modulliste wird als Fehler gemeldet', async (t) => {
     assert.match(errors(result)[0].message, /targetModules/);
     assert.strictEqual(result.notifications.length, 0);
     assert.strictEqual(result.state[P + 'lastCheck'], undefined, 'es darf kein Lauf stattfinden');
+});
+
+// ---------------------------------------------------------------------------
+// Seminargruppe
+// ---------------------------------------------------------------------------
+
+// Die Note von "Beispielmodul 1" unterscheidet sich je Gruppe (siehe
+// GRADE_BY_GROUP). Die Tests prüfen darüber, dass wirklich die Noten der
+// gewählten Gruppe gelesen werden - nicht nur, dass ein Parameter mitging.
+const groupGradeOf = (result) => result.state[P + 'modules.Beispielmodul_1.grade']?.val;
+
+test('ohne Konfiguration bleibt die vorausgewählte Seminargruppe unangetastet', async (t) => {
+    const portal = startPortal();
+    await portal.listen();
+    t.after(() => portal.close());
+
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+    });
+
+    assert.deepStrictEqual(errors(result), []);
+    assert.strictEqual(portal.currentGroup, DEFAULT_GROUP, 'die Gruppe darf nicht gewechselt werden');
+    assert.deepStrictEqual(
+        [...new Set(portal.seen.submittedGroups)],
+        [DEFAULT_GROUP],
+        'gesendet werden darf nur die Vorauswahl',
+    );
+    assert.strictEqual(groupGradeOf(result), GRADE_BY_GROUP[DEFAULT_GROUP]);
+    // Ohne Konfiguration darf auch nichts über eine Gruppenauswahl geloggt werden.
+    assert.ok(!result.logs.some((l) => /Seminargruppe/i.test(l.message)));
+});
+
+test('"default" verhält sich wie leer', async (t) => {
+    const portal = startPortal();
+    await portal.listen();
+    t.after(() => portal.close());
+
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+        seminarGroup: 'Default',
+    });
+
+    assert.deepStrictEqual(errors(result), []);
+    assert.strictEqual(portal.currentGroup, DEFAULT_GROUP);
+    assert.strictEqual(groupGradeOf(result), GRADE_BY_GROUP[DEFAULT_GROUP]);
+});
+
+test('konfigurierte Seminargruppe wird über den Anzeigetext gewählt', async (t) => {
+    const portal = startPortal();
+    await portal.listen();
+    t.after(() => portal.close());
+
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+        seminarGroup: 'BSP21w1',
+    });
+
+    assert.deepStrictEqual(errors(result), []);
+    assert.strictEqual(portal.currentGroup, 'gr-1', 'Portal hat die Gruppe nicht übernommen');
+    assert.ok(portal.seen.submittedGroups.includes('gr-1'));
+    assert.strictEqual(groupGradeOf(result), GRADE_BY_GROUP['gr-1'], 'Noten der falschen Gruppe gelesen');
+    assert.ok(result.logs.some((l) => l.message.includes('Wähle Seminargruppe "BSP21w1"')));
+});
+
+test('Seminargruppe kann auch über den option-value gewählt werden', async (t) => {
+    const portal = startPortal();
+    await portal.listen();
+    t.after(() => portal.close());
+
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+        seminarGroup: 'gr-3',
+    });
+
+    assert.deepStrictEqual(errors(result), []);
+    assert.strictEqual(portal.currentGroup, 'gr-3');
+    assert.strictEqual(groupGradeOf(result), GRADE_BY_GROUP['gr-3']);
+});
+
+test('Seminargruppe matcht case-insensitiv und als Teilstring', async (t) => {
+    const portal = startPortal();
+    await portal.listen();
+    t.after(() => portal.close());
+
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+        seminarGroup: 'bsp23',
+    });
+
+    assert.deepStrictEqual(errors(result), []);
+    assert.strictEqual(portal.currentGroup, 'gr-3');
+    assert.strictEqual(groupGradeOf(result), GRADE_BY_GROUP['gr-3']);
+});
+
+test('unbekannte Seminargruppe bricht ab und nennt die verfügbaren', async (t) => {
+    const portal = startPortal();
+    await portal.listen();
+    t.after(() => portal.close());
+
+    // Lieber ein klarer Fehler als stillschweigend die Noten der falschen
+    // Gruppe zu melden.
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+        seminarGroup: 'BSP99w9',
+        until: (r) => errors(r).length > 0,
+    });
+
+    assert.strictEqual(errors(result).length, 1);
+    const message = errors(result)[0].message;
+    assert.match(message, /BSP99w9/);
+    assert.match(message, /steht nicht zur Auswahl/);
+    for (const group of SEMINAR_GROUPS) {
+        assert.match(message, new RegExp(group.label), `verfügbare Gruppe ${group.label} fehlt in der Meldung`);
+    }
+
+    assert.strictEqual(portal.currentGroup, DEFAULT_GROUP, 'die Gruppe darf nicht gewechselt worden sein');
+    assert.strictEqual(result.notifications.length, 0, 'bei unklarer Gruppe darf nichts gemeldet werden');
+    assert.strictEqual(groupGradeOf(result), '', 'es darf keine Note geschrieben werden');
+});
+
+test('Seminargruppe funktioniert auch mit eigenem Formular für das Dropdown', async (t) => {
+    // Das echte HTML ist nicht bekannt: hier liegt das Dropdown in einem
+    // eigenen Formular, die Rechtsbehelfsbelehrung in einem zweiten - der
+    // Ablauf braucht dann zwei Submits.
+    const portal = startPortal({ layout: 'separate' });
+    await portal.listen();
+    t.after(() => portal.close());
+
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+        seminarGroup: 'BSP21w1',
+    });
+
+    assert.deepStrictEqual(errors(result), []);
+    assert.ok(portal.seen.confirmed, 'Rechtsbehelfsbelehrung wurde nicht bestätigt');
+    assert.strictEqual(portal.currentGroup, 'gr-1');
+    assert.strictEqual(groupGradeOf(result), GRADE_BY_GROUP['gr-1']);
+});
+
+test('Auswahl bleibt erhalten, wenn die Bestätigungsseite sie vergisst', async (t) => {
+    // Hier rendert das Portal das Dropdown auf der Bestätigungsseite immer mit
+    // der aktuellen Gruppe vorausgewählt. Würde beim Bestätigen nur diese
+    // Vorauswahl mitgeschickt, käme am Ende die Tabelle der falschen Gruppe.
+    const portal = startPortal({ layout: 'forgetful' });
+    await portal.listen();
+    t.after(() => portal.close());
+
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+        seminarGroup: 'BSP21w1',
+    });
+
+    assert.deepStrictEqual(errors(result), []);
+    assert.ok(portal.seen.confirmed, 'Rechtsbehelfsbelehrung wurde nicht bestätigt');
+    assert.deepStrictEqual(
+        [...new Set(portal.seen.submittedGroups)],
+        ['gr-1'],
+        `es darf nur die gewählte Gruppe gesendet werden, gesendet wurde: ${portal.seen.submittedGroups.join(', ')}`,
+    );
+    assert.strictEqual(groupGradeOf(result), GRADE_BY_GROUP['gr-1'], 'Noten der falschen Gruppe gelesen');
+});
+
+test('erkennbares Gruppen-Feld gewinnt gegen andere Dropdowns', async (t) => {
+    // Auf der Seite steht ein weiteres Dropdown mit denselben Optionstexten,
+    // und zwar vor dem echten. Gesetzt werden muss trotzdem das als
+    // Seminargruppe erkennbare Feld ("stgSelect").
+    const portal = startPortal({ decoy: true });
+    await portal.listen();
+    t.after(() => portal.close());
+
+    const result = await runScanner({
+        port: portal.port,
+        configLine: "targetModules: ['Beispielmodul 1'],",
+        seminarGroup: 'BSP21w1',
+    });
+
+    assert.deepStrictEqual(errors(result), []);
+    assert.deepStrictEqual(portal.seen.submittedGroups, ['gr-1'], 'es wurde das falsche Dropdown gesetzt');
+    assert.strictEqual(portal.currentGroup, 'gr-1');
+    assert.strictEqual(groupGradeOf(result), GRADE_BY_GROUP['gr-1']);
 });
 
 test('falsche Zugangsdaten führen zu einer Fehlermeldung', async (t) => {
