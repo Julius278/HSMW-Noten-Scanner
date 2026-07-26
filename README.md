@@ -78,6 +78,7 @@ Seite auf die Platte geschrieben werden, um die Selektoren in
    Praxis also **Node 20 oder neuer**. Wer auf Node 18 festsitzt, trägt
    stattdessen `cheerio@1.0.0-rc.12` ein — damit läuft das Script unverändert,
    die verwendeten cheerio-Funktionen sind in beiden Versionslinien gleich.
+   Beide Kombinationen laufen in der CI (siehe [Tests / CI](#tests--ci)).
 2. **Pushover-Adapter** installieren/einrichten (Instanz z.B. `pushover.0`),
    falls noch nicht vorhanden.
 3. Neues **JavaScript-Script** (Typ „Javascript/js“) in der ioBroker-Scripts-Oberfläche
@@ -145,12 +146,19 @@ bei jedem Push und Pull Request:
   HTTP-Server, der den per HAR-Mitschnitt verifizierten Login-Ablauf nachbildet;
   es wird bewusst keine Verbindung zum echten Hochschulportal aufgebaut und es
   sind keine Zugangsdaten nötig.
-- **ioBroker-Script** — die Testsuite aus `iobroker/test/` auf Node.js 20, 22
-  und 24 (`npm test`, Node-eigener Test-Runner). Die Globals der Adapter-Sandbox
-  (`log`, `schedule`, `sendTo`, `createStateAsync`, ...) werden gestubbt und das
-  Script gegen denselben nachgebildeten Login-Ablauf laufen gelassen. Dazu
-  `node --check` als Syntax-Prüfung. Node 18 ist nicht dabei, weil das aktuelle
-  `cheerio` dort nicht lädt (siehe Hinweis zur Node-Version oben).
+- **ioBroker-Script** — die Testsuite aus `iobroker/test/` (`npm test`,
+  Node-eigener Test-Runner). Die Globals der Adapter-Sandbox (`log`, `schedule`,
+  `sendTo`, `createStateAsync`, ...) werden gestubbt und das Script gegen
+  denselben nachgebildeten Login-Ablauf laufen gelassen. Dazu `node --check` als
+  Syntax-Prüfung. Getestet werden vier Kombinationen:
+
+  | Node.js | cheerio |
+  |---|---|
+  | 20, 22, 24 | aktuelles 1.x (aus `package-lock.json`) |
+  | 18 | `1.0.0-rc.12` |
+
+  Damit ist auch der oben beschriebene Weg für ältere Installationen dauerhaft
+  abgedeckt und nicht nur einmalig geprüft.
 
 Lokal ausführen:
 

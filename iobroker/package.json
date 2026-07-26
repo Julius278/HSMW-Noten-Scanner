@@ -2,12 +2,12 @@
   "name": "hsmw-noten-scanner-tests",
   "version": "1.0.0",
   "private": true,
-  "description": "Nur für die Tests von hsmw-noten-scanner.js. Das Script selbst wird in die ioBroker-Scripts-Oberfläche kopiert; dort liefert der javascript-Adapter die Module (cheerio über 'Zusätzliche NPM-Module'). Für den Produktivbetrieb ist dieses package.json nicht nötig.",
+  "description": "Nur für die Tests von hsmw-noten-scanner.js. Das Script selbst wird in die ioBroker-Scripts-Oberfläche kopiert; dort liefert der javascript-Adapter die Module (cheerio über 'Zusätzliche NPM-Module'). Für den Produktivbetrieb ist dieses package.json nicht nötig. Hinweis: das hier gelockte cheerio 1.x setzt Node >=20.18.1 voraus - unter Node 18 stattdessen cheerio@1.0.0-rc.12 installieren, damit läuft das Script unverändert.",
   "scripts": {
     "test": "node --test"
   },
   "engines": {
-    "node": ">=20.18.1"
+    "node": ">=18"
   },
   "devDependencies": {
     "cheerio": "^1.0.0"
