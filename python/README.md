@@ -82,10 +82,19 @@ Noten der falschen Gruppe zu melden. Es ist bewusst nur **eine** Gruppe möglich
 ## Aufruf
 
 ```bash
-python3 hsmw_noten_scanner.py                        # einmalig prüfen
-python3 hsmw_noten_scanner.py --module "Beispielmodul 1"  # Modul ad hoc überschreiben
-python3 hsmw_noten_scanner.py --loop                 # dauerhaft, alle 15 min
-python3 hsmw_noten_scanner.py -v                     # mit Debug-Logging
+python3 hsmw_noten_scanner.py                               # einmalig prüfen
+python3 hsmw_noten_scanner.py --module "Beispielmodul 1"    # Modul ad hoc überschreiben
+python3 hsmw_noten_scanner.py --seminar-group "BSP21w1"     # andere Seminargruppe abfragen
+python3 hsmw_noten_scanner.py --seminar-group default       # Vorauswahl behalten (wie ohne Angabe)
+python3 hsmw_noten_scanner.py --loop                        # dauerhaft, alle 15 min
+python3 hsmw_noten_scanner.py -v                            # mit Debug-Logging
+```
+
+Die Optionen lassen sich kombinieren, z.B. ein bestimmtes Modul in einer anderen
+Seminargruppe:
+
+```bash
+python3 hsmw_noten_scanner.py --module "Beispielmodul 1" --seminar-group "BSP21w1"
 ```
 
 Beispielausgabe:
