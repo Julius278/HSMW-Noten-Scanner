@@ -21,6 +21,7 @@ Aufruf:
     python3 hsmw_noten_scanner.py                 # einmalig prüfen (für cron)
     python3 hsmw_noten_scanner.py --loop          # dauerhaft im Intervall
     python3 hsmw_noten_scanner.py --module "Beispielmodul 1"
+    python3 hsmw_noten_scanner.py --seminar-group "BSP21w1"
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import time
 import tomllib
@@ -81,6 +83,9 @@ class Config:
     password: str = ""
     url: str = "https://qispos.hs-mittweida.de/noten?intranet&m"
     target_modules: list[str] = field(default_factory=list)
+    # Leer oder "default": die vom Portal vorausgewählte Seminargruppe
+    # beibehalten (der Normalfall).
+    seminar_group: str = ""
     interval_minutes: int = 15
     request_timeout_s: float = 20.0
     state_file: Path = Path("state.json")
@@ -96,9 +101,10 @@ def load_config(config_path: Path | None) -> Config:
     """Liest die Konfiguration aus TOML-Datei und Umgebungsvariablen.
 
     Umgebungsvariablen (`HSMW_USERNAME`, `HSMW_PASSWORD`, `HSMW_URL`,
-    `HSMW_TARGET_MODULES`, `HSMW_INTERVAL_MINUTES`, `HSMW_STATE_FILE`,
-    `HSMW_DEBUG_DIR`) haben Vorrang, damit Zugangsdaten nicht in einer Datei
-    liegen müssen. `HSMW_TARGET_MODULES` ist eine kommaseparierte Liste.
+    `HSMW_TARGET_MODULES`, `HSMW_SEMINAR_GROUP`, `HSMW_INTERVAL_MINUTES`,
+    `HSMW_STATE_FILE`, `HSMW_DEBUG_DIR`) haben Vorrang, damit Zugangsdaten nicht
+    in einer Datei liegen müssen. `HSMW_TARGET_MODULES` ist eine kommaseparierte
+    Liste.
     """
     cfg = Config()
     raw: dict[str, Any] = {}
@@ -119,6 +125,7 @@ def load_config(config_path: Path | None) -> Config:
     if modules:
         cfg.target_modules = [str(m) for m in modules]
 
+    cfg.seminar_group = str(raw.get("seminar_group", cfg.seminar_group))
     cfg.interval_minutes = int(raw.get("interval_minutes", cfg.interval_minutes))
     cfg.request_timeout_s = float(raw.get("request_timeout_s", cfg.request_timeout_s))
 
@@ -135,6 +142,8 @@ def load_config(config_path: Path | None) -> Config:
         cfg.url = value
     if (value := _env_override("HSMW_TARGET_MODULES")) is not None:
         cfg.target_modules = [m.strip() for m in value.split(",") if m.strip()]
+    if (value := _env_override("HSMW_SEMINAR_GROUP")) is not None:
+        cfg.seminar_group = value
     if (value := _env_override("HSMW_INTERVAL_MINUTES")) is not None:
         cfg.interval_minutes = int(value)
     if (value := _env_override("HSMW_STATE_FILE")) is not None:
@@ -398,15 +407,52 @@ class Scanner:
         LOG.info("Login erfolgreich.")
         return result
 
+    # -- Seminargruppe -----------------------------------------------------
+
+    def wanted_seminar_group(self) -> str | None:
+        """Leer oder "default": Vorauswahl des Portals beibehalten."""
+        value = (self.cfg.seminar_group or "").strip()
+        if not value or value.lower() == "default":
+            return None
+        return value
+
+    def select_seminar_group(self, page: Page, wanted: str) -> Page:
+        """Stellt das Dropdown auf die konfigurierte Seminargruppe.
+
+        Steht die Gruppe nicht zur Auswahl, wird abgebrochen - lieber ein klarer
+        Fehler als stillschweigend die Noten der falschen Gruppe zu melden.
+        """
+        soup = page.soup
+        match = find_seminar_group_select(soup, wanted)
+
+        if match is None:
+            self.dump_debug("seminar-group-not-found", page.body)
+            raise PortalError(
+                f'Seminargruppe "{wanted}" steht nicht zur Auswahl. '
+                f"Verfügbar: {describe_seminar_group_options(soup)}"
+            )
+
+        form = match.select.find_parent("form")
+        if form is None:
+            self.dump_debug("seminar-group-no-form", page.body)
+            raise PortalError(
+                f'Das Dropdown der Seminargruppe (Feld "{match.name}") liegt außerhalb '
+                "eines <form>, die Auswahl kann nicht abgeschickt werden."
+            )
+
+        LOG.info('Wähle Seminargruppe "%s" (Feld "%s")...', match.label, match.name)
+        return self.submit_form(form, page.url, {match.name: match.value})
+
     # -- Notenübersicht ----------------------------------------------------
 
     def open_grades_view(self, page: Page) -> Page:
         """Öffnet die Ansicht "Alle Fächer anzeigen" (`?view=full`).
 
         Die Standardansicht zeigt nur bereits benotete Module; erst `?view=full`
-        listet auch noch offene Prüfungen. Davor muss ggf. einmalig die
-        Rechtsbehelfsbelehrung bestätigt werden (Formular mit versteckem Feld
-        `confirm_marks`).
+        listet auch noch offene Prüfungen. Davor stehen zwei Zwischenschritte:
+        ein Dropdown zur Auswahl der Seminargruppe (nur bei konfigurierter
+        `seminar_group` wird eingegriffen) und ggf. einmalig die
+        Rechtsbehelfsbelehrung (Formular mit verstecktem Feld `confirm_marks`).
         """
         link = next(
             (a for a in page.soup.find_all("a") if "view=full" in (a.get("href") or "").lower()),
@@ -422,6 +468,12 @@ class Scanner:
         LOG.info("Öffne vollständige Notenübersicht (alle Fächer)...")
         current = self.get(full_view_url)
 
+        # Ohne Konfiguration bleibt der Ablauf unverändert: die Vorauswahl des
+        # Dropdowns wird beim Abschicken des Formulars ohnehin mitgesendet.
+        wanted_group = self.wanted_seminar_group()
+        if wanted_group:
+            current = self.select_seminar_group(current, wanted_group)
+
         confirm_form = next(
             (
                 f
@@ -432,7 +484,14 @@ class Scanner:
         )
         if confirm_form is not None:
             LOG.info("Bestätige Rechtsbehelfsbelehrung...")
-            current = self.submit_form(confirm_form, current.url)
+            # Steht das Dropdown auch in diesem Formular, wird die Auswahl
+            # erneut mitgegeben, damit sie nicht verloren geht.
+            overrides = {}
+            if wanted_group:
+                match = find_seminar_group_select(confirm_form, wanted_group)
+                if match is not None:
+                    overrides[match.name] = match.value
+            current = self.submit_form(confirm_form, current.url, overrides)
 
         return current
 
@@ -449,6 +508,87 @@ class Scanner:
             LOG.info("Debug-Snapshot gespeichert: %s", target)
         except OSError as err:
             LOG.warning("Konnte Debug-Snapshot nicht schreiben: %s", err)
+
+
+# ---------------------------------------------------------------------------
+# Seminargruppe
+# ---------------------------------------------------------------------------
+
+# Der Feldname des Dropdowns im Portal ist "stgSelect"; darauf wird aber nicht
+# fest abgestellt, damit die Erkennung eine Umbenennung übersteht.
+SEMINAR_GROUP_HINT = re.compile(r"stg|seminar|gruppe|group", re.IGNORECASE)
+
+
+def _normalize(text: Any) -> str:
+    return " ".join(str(text or "").split()).lower()
+
+
+@dataclass
+class SeminarGroupMatch:
+    select: Any
+    name: str
+    value: str
+    label: str
+
+
+def _select_options(select: Any) -> list[tuple[str, str]]:
+    """Liefert (Anzeigetext, value) je Option; ohne value zählt der Text."""
+    options = []
+    for opt in select.find_all("option"):
+        label = " ".join(opt.get_text().split())
+        value = opt.get("value")
+        options.append((label, label if value is None else value))
+    return options
+
+
+def _named_selects(scope: Any) -> list[Any]:
+    return [s for s in scope.find_all("select") if s.get("name")]
+
+
+def find_seminar_group_select(scope: Any, wanted: str) -> SeminarGroupMatch | None:
+    """Sucht das Dropdown, das die gewünschte Seminargruppe anbietet.
+
+    Gesucht wird nicht über den Feldnamen, sondern über die Optionen: gefunden
+    ist das `<select>`, in dem der konfigurierte Wert vorkommt - verglichen wird
+    Anzeigetext und value-Attribut, erst exakt, dann als Teilstring. Selects,
+    deren name/id auf eine Seminargruppe hindeutet, werden bevorzugt, damit bei
+    mehreren Dropdowns nicht das falsche greift.
+    """
+    selects = _named_selects(scope)
+    hinted = [s for s in selects if SEMINAR_GROUP_HINT.search(f"{s.get('name') or ''} {s.get('id') or ''}")]
+    ordered = hinted + [s for s in selects if s not in hinted]
+    target = _normalize(wanted)
+
+    matchers = (
+        lambda label, value: target in (_normalize(label), _normalize(value)),
+        lambda label, value: target in _normalize(label) or target in _normalize(value),
+    )
+    for matches in matchers:
+        for select in ordered:
+            for label, value in _select_options(select):
+                if matches(label, value):
+                    return SeminarGroupMatch(
+                        select=select,
+                        name=select["name"],
+                        value=value,
+                        label=label or value,
+                    )
+    return None
+
+
+def describe_seminar_group_options(soup: Any) -> str:
+    """Für die Fehlermeldung: welche Gruppen stünden zur Auswahl?"""
+    selects = _named_selects(soup)
+    hinted = [s for s in selects if SEMINAR_GROUP_HINT.search(f"{s.get('name') or ''} {s.get('id') or ''}")]
+    relevant = hinted or selects
+    if not relevant:
+        return "kein Auswahlfeld auf der Seite gefunden"
+
+    parts = []
+    for select in relevant:
+        labels = [label or value for label, value in _select_options(select)]
+        parts.append(f"{select['name']}: {', '.join(labels) or '(keine Optionen)'}")
+    return " | ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +794,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Zu überwachendes Modul (mehrfach angebbar, überschreibt die Konfiguration)",
     )
     parser.add_argument(
+        "-g",
+        "--seminar-group",
+        default=None,
+        help=(
+            "Seminargruppe, für die abgefragt wird (überschreibt die Konfiguration). "
+            "Leer oder 'default' lässt die Vorauswahl des Portals unangetastet."
+        ),
+    )
+    parser.add_argument(
         "--loop",
         action="store_true",
         help="Dauerhaft laufen und im konfigurierten Intervall prüfen (statt einmalig)",
@@ -680,6 +829,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(config_path)
     if args.modules:
         cfg.target_modules = args.modules
+    if args.seminar_group is not None:
+        cfg.seminar_group = args.seminar_group
     if args.interval_minutes is not None:
         cfg.interval_minutes = args.interval_minutes
 

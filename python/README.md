@@ -9,6 +9,7 @@ Gleicher Ablauf — Shibboleth-SSO-Login (inkl. SPNEGO-Bypass), Notenübersicht
 |---|---|---|
 | Konfiguration | `CONFIG`-Block im Quelltext | `config.toml` + Umgebungsvariablen |
 | Mehrere Module | `targetModules` | `target_modules` |
+| Seminargruppe | `seminarGroup` | `seminar_group` / `--seminar-group` |
 | HTML-Parsing | `cheerio` | `beautifulsoup4` |
 | HTTP | `fetch` + eigenes Cookie-Handling | `requests.Session` |
 | Zustand | ioBroker-States | JSON-Datei (`state.json`) |
@@ -43,6 +44,7 @@ nicht in einer Datei steht:
 | `HSMW_PASSWORD` | QIS-Kennwort |
 | `HSMW_URL` | Startseite, Standard `https://qispos.hs-mittweida.de/noten?intranet&m` |
 | `HSMW_TARGET_MODULES` | kommaseparierte Modulliste, z.B. `Beispielmodul 1,Beispielmodul 2` |
+| `HSMW_SEMINAR_GROUP` | Seminargruppe, leer/`default` = Vorauswahl behalten |
 | `HSMW_INTERVAL_MINUTES` | Intervall für `--loop` |
 | `HSMW_STATE_FILE` | Pfad der Zustandsdatei |
 | `HSMW_DEBUG_DIR` | Verzeichnis für HTML-Snapshots bei Fehlern |
@@ -51,13 +53,48 @@ Gesucht wird in der Spalte **Fach**, also der volle bzw. eindeutige Modulname
 ("Beispielmodul 1"), nicht die kurze Kennung aus der Spalte "Modul"
 (`1234(M)`). Groß-/Kleinschreibung ist unerheblich.
 
+### Seminargruppe
+
+Vor der Notentabelle steht im Portal ein Dropdown zur Auswahl der Seminargruppe
+(Feld `stgSelect`); vorausgewählt ist die aktuelle. `seminar_group` leer lassen
+oder auf `default` setzen, um diese Vorauswahl zu übernehmen — das ist der
+Normalfall.
+
+Nur wenn die Noten einer **anderen** zugewiesenen Gruppe geprüft werden sollen
+(z.B. nach einem Gruppenwechsel), den Gruppennamen eintragen:
+
+```toml
+seminar_group = "BSP21w1"
+```
+
+oder pro Aufruf:
+
+```bash
+python3 hsmw_noten_scanner.py --seminar-group "BSP21w1"
+```
+
+Gefunden wird die Gruppe über den Anzeigetext **oder** den `option`-Wert, ohne
+Rücksicht auf Groß-/Kleinschreibung und auch als eindeutiger Teilstring. Steht
+der Wert nicht zur Auswahl, bricht der Lauf mit Exit-Code `1` ab und die
+Fehlermeldung nennt die verfügbaren Gruppen — lieber das als stillschweigend die
+Noten der falschen Gruppe zu melden. Es ist bewusst nur **eine** Gruppe möglich.
+
 ## Aufruf
 
 ```bash
-python3 hsmw_noten_scanner.py                        # einmalig prüfen
-python3 hsmw_noten_scanner.py --module "Beispielmodul 1"  # Modul ad hoc überschreiben
-python3 hsmw_noten_scanner.py --loop                 # dauerhaft, alle 15 min
-python3 hsmw_noten_scanner.py -v                     # mit Debug-Logging
+python3 hsmw_noten_scanner.py                               # einmalig prüfen
+python3 hsmw_noten_scanner.py --module "Beispielmodul 1"    # Modul ad hoc überschreiben
+python3 hsmw_noten_scanner.py --seminar-group "BSP21w1"     # andere Seminargruppe abfragen
+python3 hsmw_noten_scanner.py --seminar-group default       # Vorauswahl behalten (wie ohne Angabe)
+python3 hsmw_noten_scanner.py --loop                        # dauerhaft, alle 15 min
+python3 hsmw_noten_scanner.py -v                            # mit Debug-Logging
+```
+
+Die Optionen lassen sich kombinieren, z.B. ein bestimmtes Modul in einer anderen
+Seminargruppe:
+
+```bash
+python3 hsmw_noten_scanner.py --module "Beispielmodul 1" --seminar-group "BSP21w1"
 ```
 
 Beispielausgabe:

@@ -22,6 +22,17 @@ url = "https://qispos.hs-mittweida.de/noten?intranet&m"
 # Groß-/Kleinschreibung wird ignoriert.
 target_modules = ["dein_modulname"]
 
+# Optional: Seminargruppe, für die die Noten abgefragt werden. Vor der
+# Notentabelle steht im Portal ein Dropdown zur Auswahl der Seminargruppe
+# (Feld "stgSelect"); vorausgewählt ist die aktuelle. Leer lassen oder "default"
+# eintragen, um die Vorauswahl unangetastet zu lassen - das ist der Normalfall.
+# Nur wenn hier etwas steht (z.B. nach einem Gruppenwechsel eine frühere
+# Gruppe), wird umgeschaltet. Erkannt wird über Anzeigetext oder option-value,
+# Groß-/Kleinschreibung und Teiltreffer inklusive. Steht der Wert nicht zur
+# Auswahl, bricht der Lauf mit einer Fehlermeldung ab, die die verfügbaren
+# Gruppen nennt. Es ist bewusst nur eine Gruppe möglich.
+seminar_group = ""
+
 # Intervall für den Dauerbetrieb (--loop) in Minuten
 interval_minutes = 15
 

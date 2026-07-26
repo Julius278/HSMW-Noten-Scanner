@@ -50,6 +50,15 @@ const CONFIG = {
     // String ist ebenfalls erlaubt:  targetModules: 'dein_modulname'
     targetModules: ['dein_modulname'],
 
+    // Optional: Seminargruppe, für die die Noten abgefragt werden. Vor der
+    // Notentabelle steht im Portal ein Dropdown zur Auswahl der Seminargruppe;
+    // vorausgewählt ist die aktuelle. Leer lassen oder 'default' eintragen, um
+    // die Vorauswahl unangetastet zu lassen - das ist der Normalfall. Nur wenn
+    // hier etwas steht (z.B. nach einem Gruppenwechsel eine frühere Gruppe),
+    // wird umgeschaltet; steht der Wert nicht zur Auswahl, bricht der Lauf mit
+    // einer Fehlermeldung ab, die die verfügbaren Gruppen nennt.
+    seminarGroup: '',
+
     // Pushover-Adapterinstanz und optionaler Sound
     pushoverInstance: 'pushover.0',
     pushoverSound: '',
@@ -426,16 +435,137 @@ async function login(jar) {
 }
 
 // ---------------------------------------------------------------------------
+// Seminargruppe
+// ---------------------------------------------------------------------------
+
+// Leer oder "default": die vom Portal vorausgewählte Seminargruppe beibehalten.
+function wantedSeminarGroup() {
+    const value = String(CONFIG.seminarGroup || '').trim();
+    if (!value || value.toLowerCase() === 'default') return null;
+    return value;
+}
+
+const normalizeLabel = (text) => String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+function selectOptions($, select) {
+    return $(select)
+        .find('option')
+        .map((i, opt) => {
+            const $opt = $(opt);
+            const label = String($opt.text() || '').replace(/\s+/g, ' ').trim();
+            const value = $opt.attr('value');
+            return { label, value: value === undefined ? label : value };
+        })
+        .get();
+}
+
+// Sucht das Dropdown, das die gewünschte Seminargruppe anbietet.
+//
+// Der Feldname des Dropdowns im Portal ist nicht dokumentiert, deshalb wird
+// bewusst nicht darauf abgestellt: gesucht wird das <select>, in dessen
+// Optionen der konfigurierte Wert vorkommt - verglichen wird sowohl der
+// Anzeigetext als auch das value-Attribut, erst exakt, dann als Teilstring.
+// Selects, deren name/id auf eine Seminargruppe hindeutet, werden bevorzugt
+// (im Portal heißt das Feld "stgSelect"); so greift die Suche auch dann nicht
+// auf ein unbeteiligtes Dropdown, wenn mehrere auf der Seite stehen.
+function findSeminarGroupSelect($, wanted, scope) {
+    const selects = (scope && scope.length ? scope.find('select') : $('select'))
+        .map((i, el) => el)
+        .get()
+        .filter((el) => $(el).attr('name'));
+
+    const looksLikeGroup = (el) =>
+        /stg|seminar|gruppe|group/i.test(`${$(el).attr('name') || ''} ${$(el).attr('id') || ''}`);
+
+    // Bevorzugt die als Seminargruppe erkennbaren Dropdowns durchsuchen.
+    const ordered = [...selects.filter(looksLikeGroup), ...selects.filter((el) => !looksLikeGroup(el))];
+    const target = normalizeLabel(wanted);
+
+    for (const matcher of [
+        (o) => normalizeLabel(o.label) === target || normalizeLabel(o.value) === target,
+        (o) => normalizeLabel(o.label).includes(target) || normalizeLabel(o.value).includes(target),
+    ]) {
+        for (const el of ordered) {
+            const option = selectOptions($, el).find(matcher);
+            if (option) {
+                return { select: el, name: $(el).attr('name'), value: option.value, label: option.label || option.value };
+            }
+        }
+    }
+    return null;
+}
+
+// Für die Fehlermeldung: welche Gruppen stünden zur Auswahl?
+function describeSeminarGroupOptions($) {
+    const selects = $('select')
+        .map((i, el) => el)
+        .get()
+        .filter((el) => $(el).attr('name'));
+    const preferred = selects.filter((el) =>
+        /stg|seminar|gruppe|group/i.test(`${$(el).attr('name') || ''} ${$(el).attr('id') || ''}`),
+    );
+    const relevant = preferred.length > 0 ? preferred : selects;
+    if (relevant.length === 0) return 'kein Auswahlfeld auf der Seite gefunden';
+
+    return relevant
+        .map((el) => {
+            const labels = selectOptions($, el)
+                .map((o) => o.label || o.value)
+                .filter((l) => l);
+            return `${$(el).attr('name')}: ${labels.join(', ') || '(keine Optionen)'}`;
+        })
+        .join(' | ');
+}
+
+// Liefert die Feld-Überschreibung, falls das Dropdown in diesem Formular steht.
+function seminarGroupOverride($, form, wanted) {
+    if (!wanted) return {};
+    const match = findSeminarGroupSelect($, wanted, form);
+    return match ? { [match.name]: match.value } : {};
+}
+
+// Stellt das Dropdown auf die konfigurierte Seminargruppe und schickt dessen
+// Formular ab. Steht die Gruppe nicht zur Auswahl, wird abgebrochen - lieber
+// ein klarer Fehler als stillschweigend die Noten der falschen Gruppe zu
+// melden.
+async function selectSeminarGroup(jar, page, wanted) {
+    const $ = cheerio.load(page.body);
+    const match = findSeminarGroupSelect($, wanted);
+
+    if (!match) {
+        dumpDebug('seminar-group-not-found', page.body);
+        throw new Error(
+            `Seminargruppe "${wanted}" steht nicht zur Auswahl. Verfügbar: ${describeSeminarGroupOptions($)}`,
+        );
+    }
+
+    const form = $(match.select).closest('form');
+    if (form.length === 0) {
+        dumpDebug('seminar-group-no-form', page.body);
+        throw new Error(
+            `Das Dropdown der Seminargruppe (Feld "${match.name}") liegt außerhalb eines <form>, ` +
+                'die Auswahl kann nicht abgeschickt werden.',
+        );
+    }
+
+    log(`Wähle Seminargruppe "${match.label}" (Feld "${match.name}")...`, 'debug');
+    return submitForm($, form, page.url, jar, { fields: { [match.name]: match.value } });
+}
+
+// ---------------------------------------------------------------------------
 // Notenübersicht öffnen
 // ---------------------------------------------------------------------------
 
-// Direkt nach dem Login landet man bereits auf der Notenanzeige-Seite. Zwei
-// Besonderheiten dieser konkreten Seite (laut echtem HTML-Export):
+// Direkt nach dem Login landet man bereits auf der Notenanzeige-Seite. Drei
+// Besonderheiten dieser konkreten Seite:
 //   1. Die Standardansicht zeigt vermutlich nicht alle Module (nur bereits
 //      benotete). Der Link "Alle Fächer anzeigen" (?view=full) zeigt die
 //      vollständige Liste inkl. noch nicht bewerteter Module - das ist die
 //      für uns relevante Ansicht.
-//   2. Vor der eigentlichen Notenliste muss einmalig eine
+//   2. Vor der Notentabelle steht ein Dropdown zur Auswahl der Seminargruppe.
+//      Ohne Konfiguration wird die Vorauswahl des Portals einfach mitgesendet;
+//      nur wenn CONFIG.seminarGroup gesetzt ist, wird umgeschaltet.
+//   3. Vor der eigentlichen Notenliste muss einmalig eine
 //      Rechtsbehelfsbelehrung bestätigt werden: ein <form> ohne action mit
 //      einem versteckten Feld "confirm_marks=true", das an die aktuelle
 //      Seite zurückgesendet wird.
@@ -458,13 +588,25 @@ async function openGradesView(jar, page) {
     log('Öffne vollständige Notenübersicht (alle Fächer)...', 'debug');
     let current = await fetchWithCookies(fullViewUrl, { method: 'GET' }, jar);
 
+    // Nur bei konfigurierter Seminargruppe eingreifen. Ohne Konfiguration
+    // bleibt der Ablauf unverändert: die Vorauswahl des Dropdowns wird beim
+    // Abschicken des Formulars ohnehin mitgesendet.
+    const wantedGroup = wantedSeminarGroup();
+    if (wantedGroup) {
+        current = await selectSeminarGroup(jar, current, wantedGroup);
+    }
+
     let $$ = cheerio.load(current.body);
     const confirmForm = $$('form')
         .filter((i, el) => $$(el).find('input[name=confirm_marks]').length > 0)
         .first();
     if (confirmForm.length > 0) {
         log('Bestätige Rechtsbehelfsbelehrung...', 'debug');
-        current = await submitForm($$, confirmForm, current.url, jar, {});
+        // Steht das Dropdown auch auf dieser Seite (bzw. im selben Formular),
+        // wird die Auswahl erneut mitgegeben, damit sie nicht verloren geht.
+        current = await submitForm($$, confirmForm, current.url, jar, {
+            fields: seminarGroupOverride($$, confirmForm, wantedGroup),
+        });
     }
 
     return current;
